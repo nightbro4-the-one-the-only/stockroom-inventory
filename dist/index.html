@@ -10,7 +10,7 @@
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<title data-i18n="appTitle">Stockroom â€” Inventory Manager</title>
+<title data-i18n="appTitle">Stockroom — Inventory Manager</title>
 <script>
   /* Apply theme before first paint to avoid a flash of the wrong scheme. */
   (function () {
@@ -24,7 +24,6 @@
     } catch (e) { /* ignore storage errors */ }
   })();
 </script>
-
 <style>
 /* ============================================================
    Stockroom — Inventory Manager (styles)
@@ -733,7 +732,7 @@ tr.scanned-row:hover td { background: #e7f9ec; }
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.35-4.35" />
         </svg>
-        <input id="search" type="search" placeholder="Search name or SKUâ€¦" autocomplete="off" data-i18n-ph="searchPlaceholder" />
+        <input id="search" type="search" placeholder="Search name or SKU…" autocomplete="off" data-i18n-ph="searchPlaceholder" />
       </div>
       <button class="btn btn-ghost" id="scanBtn" title="Scan a printed label with your camera" data-i18n-title="scanBtnTitle">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -902,7 +901,7 @@ tr.scanned-row:hover td { background: #e7f9ec; }
     </section>
 
     <p class="footnote" data-i18n="footnote">
-      Data stays on this device â€” the app works fully offline with no server. Use Export CSV to back it up or move it elsewhere.
+      Data stays on this device — the app works fully offline with no server. Use Export CSV to back it up or move it elsewhere.
     </p>
   </main>
 
@@ -982,14 +981,14 @@ tr.scanned-row:hover td { background: #e7f9ec; }
       </div>
       <div class="scan-body">
         <div class="scan-manual">
-          <input type="text" id="scanCodeInput" placeholder="â€¦" data-i18n-ph="scanManualPlaceholder" autocomplete="off" spellcheck="false" />
+          <input type="text" id="scanCodeInput" placeholder="…" data-i18n-ph="scanManualPlaceholder" autocomplete="off" spellcheck="false" />
           <button type="button" class="btn btn-ghost" id="scanLookupBtn" data-i18n="scanLookupBtn">Look up</button>
         </div>
         <div class="scan-viewport">
           <video id="scanVideo" playsinline muted autoplay></video>
           <div class="scan-frame" aria-hidden="true"></div>
         </div>
-        <p class="scan-status" id="scanStatus" data-i18n="startingCamera">Starting cameraâ€¦</p>
+        <p class="scan-status" id="scanStatus" data-i18n="startingCamera">Starting camera…</p>
         <div class="scan-result" id="scanResult" hidden>
           <div class="scan-result-name" id="scanResultName"></div>
           <div class="scan-result-sku" id="scanResultSku"></div>
@@ -1178,7 +1177,7 @@ tr.scanned-row:hover td { background: #e7f9ec; }
         <div class="field">
           <label class="field-label" for="bulkCategory" data-i18n="bulkCategoryLabel">Category</label>
           <select id="bulkCategory">
-            <option value="">â€”</option>
+            <option value="">—</option>
           </select>
         </div>
         <div class="field" style="margin-top: 14px;">
@@ -1234,7 +1233,7 @@ tr.scanned-row:hover td { background: #e7f9ec; }
           <button class="btn btn-ghost" id="copySkuBtn" data-i18n="copySkuBtn">Copy SKU</button>
           <button class="btn btn-primary" id="printLabelBtn" data-i18n="printLabelBtn">Print label</button>
         </div>
-        <p class="code-hint" data-i18n="codeHint">Scan with any phone camera or QR reader. The code contains the SKU â€” paste it into the search box to look up or adjust this item.</p>
+        <p class="code-hint" data-i18n="codeHint">Scan with any phone camera or QR reader. The code contains the SKU — paste it into the search box to look up or adjust this item.</p>
       </div>
     </div>
   </div>
@@ -1260,7 +1259,7 @@ tr.scanned-row:hover td { background: #e7f9ec; }
           <option value="import" data-i18n="histImports">Imports</option>
           <option value="sold" data-i18n="histSales">Sales</option>
         </select>
-        <input type="search" id="historySearch" placeholder="Search item name or SKUâ€¦" autocomplete="off" data-i18n-ph="historySearchPlaceholder" />
+        <input type="search" id="historySearch" placeholder="Search item name or SKU…" autocomplete="off" data-i18n-ph="historySearchPlaceholder" />
         <button class="btn btn-ghost" id="clearHistoryBtn" data-i18n="clearHistoryBtn">Clear history</button>
       </div>
       <div class="history-list" id="historyList"></div>
@@ -1344,7 +1343,6 @@ tr.scanned-row:hover td { background: #e7f9ec; }
       </div>
     </div>
   </div>
-
 
 <script>
 'use strict';
