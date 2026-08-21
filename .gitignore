@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output (regenerate with build.ps1)
+# dist/ — included so Pages can deploy it
+
+# Freebuff internal
+.freebuff/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

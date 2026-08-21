@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<meta name="theme-color" content="#4f46e5" />
+<link rel="icon" type="image/png" href="./icons/icon-192.png" />
+<link rel="apple-touch-icon" href="./icons/icon-192.png" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title data-i18n="appTitle">Stockroom â€” Inventory Manager</title>
+<script>
+  /* Apply theme before first paint to avoid a flash of the wrong scheme. */
+  (function () {
+    try {
+      var t = localStorage.getItem('freebuff.inventory.theme.v1');
+      if (t === 'dark' || t === 'light') {
+        document.documentElement.dataset.theme = t;
+      } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    } catch (e) { /* ignore storage errors */ }
+  })();
+</script>
+<link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 8l-9-5-9 5 9 5 9-5z" />
+            <path d="M3 8v8l9 5 9-5V8" />
+            <path d="M12 13v8" />
+          </svg>
+        </div>
+        <div>
+          <h1>Stockroom</h1>
+          <p data-i18n="appTagline">Inventory manager</p>
+        </div>
+      </div>
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="M21 21l-4.35-4.35" />
+        </svg>
+        <input id="search" type="search" placeholder="Search name or SKUâ€¦" autocomplete="off" data-i18n-ph="searchPlaceholder" />
+      </div>
+      <button class="btn btn-ghost" id="scanBtn" title="Scan a printed label with your camera" data-i18n-title="scanBtnTitle">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
+          <circle cx="12" cy="13" r="4" />
+        </svg>
+        <span data-i18n="scanBtn">Scan</span>
+      </button>
+      <button class="btn btn-ghost theme-toggle" id="themeBtn" title="Switch to dark mode" aria-label="Toggle dark mode" aria-pressed="false" data-i18n-aria="themeToggleAria">
+        <svg class="moon-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+        </svg>
+        <svg class="sun-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+        </svg>
+      </button>
+      <button class="btn btn-ghost theme-toggle" id="settingsBtn" title="Settings" aria-label="Open settings" data-i18n-title="settingsBtnTitle" data-i18n-aria="settingsBtnAria">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" />
+        </svg>
+      </button>
+      <button class="btn btn-ghost" id="installBtn" title="Install app" hidden data-i18n-title="installBtnTitle" data-i18n-aria="installBtnAria">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 19h16" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Stats -->
+    <section class="stats" id="stats" aria-label="Inventory summary" data-i18n-aria="statsAria"></section>
+
+    <!-- Toolbar -->
+    <section class="toolbar" aria-label="Item controls" data-i18n-aria="toolbarAria">
+      <div class="toolbar-row">
+      <div class="filters">
+        <label class="field">
+          <span class="field-label" data-i18n="categoryLabel">Category</span>
+          <select id="categoryFilter">
+            <option value="all" data-i18n="allCategories">All categories</option>
+          </select>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="lowStockOnly" />
+          <span data-i18n="lowStockOnly">Low stock only</span>
+        </label>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" id="historyBtn" title="View stock history" data-i18n-title="historyBtnTitle">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          <span data-i18n="historyBtn">History</span>
+        </button>
+        <button class="btn btn-ghost" id="cartBtn" title="Open cart" data-i18n-title="cartBtnTitle">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" />
+            <path d="M2.05 2.05h2l2.66 12.42a2 2 0 002 1.58h9.78a2 2 0 001.95-1.57l1.65-7.43H5.12" />
+          </svg>
+          <span data-i18n="cartBtn">Cart</span>
+          <span class="cart-badge" id="cartBadge" hidden>0</span>
+        </button>
+        <button class="btn btn-ghost" id="sellersBtn" title="See best-selling items" data-i18n-title="sellersBtnTitle">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 20V10" /><path d="M10 20V4" /><path d="M16 20v-6" /><path d="M2 20h20" />
+          </svg>
+          <span data-i18n="sellersBtn">Best sellers</span>
+        </button>
+        <button class="btn btn-ghost" id="reorderBtn" title="Check which items need reordering">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" />
+            <rect x="8" y="2" width="8" height="4" rx="1" />
+            <path d="M9 12h6M9 16h6" />
+          </svg>
+          <span data-i18n="reorderBtn">Reorder</span>
+          <span class="btn-count" id="reorderCount" hidden></span>
+        </button>
+        <button class="btn btn-ghost" id="exportBtn" title="Download items as CSV" data-i18n-title="exportCsvBtnTitle">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 21h16" />
+          </svg>
+          <span data-i18n="exportCsvBtn">Export CSV</span>
+        </button>
+        <label class="btn btn-ghost" for="importFile" title="Import items from a CSV file" data-i18n-title="importCsvBtnTitle">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 21V9" /><path d="M7 14l5-5 5 5" /><path d="M4 3h16" />
+          </svg>
+          <span data-i18n="importCsvBtn">Import CSV</span>
+        </label>
+        <input type="file" id="importFile" accept=".csv,text/csv" hidden />
+        <button class="btn btn-ghost" id="printLabelsBtn" title="Print QR labels for selected items" disabled>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 9V3h12v6" /><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" />
+            <rect x="6" y="14" width="12" height="7" />
+          </svg>
+          <span data-i18n="printLabelsBtn">Print labels</span>
+          <span class="btn-count" id="printCount" hidden></span>
+        </button>
+        <button class="btn btn-ghost" id="countSheetBtn" title="Print a stock-take count sheet" data-i18n-title="countSheetBtnTitle">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" />
+            <rect x="8" y="2" width="8" height="4" rx="1" />
+            <path d="M9 14l2 2 4-4" />
+          </svg>
+          <span data-i18n="countSheetBtn">Count sheet</span>
+        </button>
+        <button class="btn btn-ghost" id="bulkEditBtn" title="Edit category, stock, or prices for selected items" disabled data-i18n-title="bulkBtnTitle">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 3a2.8 2.8 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+          </svg>
+          <span data-i18n="bulkBtn">Bulk edit</span>
+        </button>
+        <button class="btn btn-ghost" id="clearSelBtn" title="Clear selection" hidden data-i18n-title="clearSelBtnTitle"><span data-i18n="clearSelBtn">Clear</span></button>
+        <button class="btn btn-primary" id="addBtn">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span data-i18n="addItemBtn">Add item</span>
+        </button>
+      </div>
+      </div>
+      <div class="chips-row" id="categoryChips" aria-label="Filter by category" data-i18n-aria="chipsAria"></div>
+    </section>
+
+    <!-- Table -->
+    <section class="table-card">
+      <div class="table-scroll">
+        <table class="items-table">
+          <thead>
+            <tr>
+              <th class="sel-col" aria-label="Select" data-i18n-aria="thSelect">
+                <input type="checkbox" id="selectAll" aria-label="Select all visible items" data-i18n-aria="selectAllAria" />
+              </th>
+              <th class="sortable" data-sort="name"><span data-i18n="thItem">Item</span> <span class="sort-indicator"></span></th>
+              <th class="sortable" data-sort="category"><span data-i18n="thCategory">Category</span> <span class="sort-indicator"></span></th>
+              <th class="sortable num" data-sort="quantity"><span data-i18n="thInStock">In stock</span> <span class="sort-indicator"></span></th>
+              <th class="sortable num" data-sort="unitPrice"><span data-i18n="thUnitPrice">Unit price</span> <span class="sort-indicator"></span></th>
+              <th class="num" data-i18n="thValue">Value</th>
+              <th data-i18n="thLocation">Location</th>
+              <th class="updated-col" data-i18n="thUpdated">Updated</th>
+              <th class="actions-col" aria-label="Actions" data-i18n-aria="actionsAria"></th>
+            </tr>
+          </thead>
+          <tbody id="itemsBody"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="empty-state" hidden>
+        <div class="empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 8l-9-5-9 5 9 5 9-5z" />
+            <path d="M3 8v8l9 5 9-5V8" />
+            <path d="M12 13v8" />
+          </svg>
+        </div>
+        <h2 id="emptyTitle" data-i18n="emptyNoItems">No items yet</h2>
+        <p id="emptyText" data-i18n="emptyAddFirst">Add your first item to get started.</p>
+        <div class="empty-actions">
+          <button class="btn btn-primary" id="emptyAddBtn"><span data-i18n="addItemBtn">Add item</span></button>
+          <button class="btn btn-ghost" id="emptySeedBtn"><span data-i18n="loadSampleData">Load sample data</span></button>
+        </div>
+      </div>
+    </section>
+
+    <p class="footnote" data-i18n="footnote">
+      Data stays on this device â€” the app works fully offline with no server. Use Export CSV to back it up or move it elsewhere.
+    </p>
+  </main>
+
+  <!-- Add / edit modal -->
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-header">
+        <h2 id="modalTitle" data-i18n="modalAddTitle">Add item</h2>
+        <button class="icon-btn" id="modalClose" aria-label="Close" data-i18n-aria="closeAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <form id="itemForm" novalidate>
+        <input type="hidden" id="itemId" />
+        <div class="form-grid">
+          <div class="field span-2">
+            <label class="field-label" for="fName" data-i18n="fNameLabel">Item name *</label>
+            <input type="text" id="fName" required maxlength="120" placeholder="e.g. Wireless Mouse" data-i18n-ph="fNamePlaceholder" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="fSku" data-i18n="skuLabel">SKU</label>
+            <input type="text" id="fSku" maxlength="60" placeholder="e.g. ACC-1001" data-i18n-ph="skuPlaceholder" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="fCategory" data-i18n="categoryLabel">Category</label>
+            <input type="text" id="fCategory" list="categoryList" maxlength="60" placeholder="e.g. Electronics" data-i18n-ph="categoryPlaceholder" />
+            <datalist id="categoryList"></datalist>
+          </div>
+          <div class="field">
+            <label class="field-label" for="fQuantity" data-i18n="quantityLabel">Quantity *</label>
+            <input type="number" id="fQuantity" min="0" step="1" required placeholder="0" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="fUnitPrice" id="fUnitPriceLabel" data-i18n="unitPriceLabel">Unit price ($)</label>
+            <input type="number" id="fUnitPrice" min="0" step="0.01" placeholder="0.00" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="fCost" id="fCostLabel" data-i18n="costLabel">Cost price</label>
+            <input type="number" id="fCost" min="0" step="0.01" placeholder="0.00" />
+            <p class="field-hint" id="costHint"></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="fInvoice" id="fInvoiceLabel" data-i18n="fInvoiceLabel">Invoice amount</label>
+            <input type="number" id="fInvoice" min="0" step="0.01" placeholder="0.00" />
+            <p class="field-hint" id="invoiceHint"></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="fMinStock" data-i18n="minStockLabel">Min stock</label>
+            <input type="number" id="fMinStock" min="0" step="1" placeholder="0" />
+            <p class="field-hint" data-i18n="minStockHint">Quantities at or below this are flagged as low.</p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="fLocation" data-i18n="locationLabel">Location</label>
+            <input type="text" id="fLocation" maxlength="60" placeholder="e.g. A-01" data-i18n-ph="locationPlaceholder" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="cancelBtn" data-i18n="cancelBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="saveBtn" data-i18n="saveItemBtn">Save item</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Camera scanner -->
+  <div class="modal-backdrop" id="scanBackdrop" hidden>
+    <div class="modal scan-modal" role="dialog" aria-modal="true" aria-labelledby="scanTitle">
+      <div class="modal-header">
+        <h2 id="scanTitle" data-i18n="scanTitle">Scan label</h2>
+        <button class="icon-btn" id="scanClose" aria-label="Close scanner" data-i18n-aria="closeScannerAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="scan-body">
+        <div class="scan-manual">
+          <input type="text" id="scanCodeInput" placeholder="â€¦" data-i18n-ph="scanManualPlaceholder" autocomplete="off" spellcheck="false" />
+          <button type="button" class="btn btn-ghost" id="scanLookupBtn" data-i18n="scanLookupBtn">Look up</button>
+        </div>
+        <div class="scan-viewport">
+          <video id="scanVideo" playsinline muted autoplay></video>
+          <div class="scan-frame" aria-hidden="true"></div>
+        </div>
+        <p class="scan-status" id="scanStatus" data-i18n="startingCamera">Starting cameraâ€¦</p>
+        <div class="scan-result" id="scanResult" hidden>
+          <div class="scan-result-name" id="scanResultName"></div>
+          <div class="scan-result-sku" id="scanResultSku"></div>
+          <div class="scan-result-qty">
+            <span class="qty-cell">
+              <button class="qty-step" id="scanDecBtn" aria-label="Decrease scanned item quantity" title="Decrease quantity" data-i18n-aria="scanDecAria" data-i18n-title="decreaseQty">âˆ’</button>
+              <span class="qty-value" id="scanQtyValue">0</span>
+              <button class="qty-step" id="scanIncBtn" aria-label="Increase scanned item quantity" title="Increase quantity" data-i18n-aria="scanIncAria" data-i18n-title="increaseQty">+</button>
+            </span>
+          </div>
+          <div class="scan-adjust-actions">
+            <button class="btn btn-ghost scan-adjust-remove" id="scanRemoveBtn" data-i18n="scanRemoveStock">âˆ’ Remove stock</button>
+            <button class="btn btn-primary scan-adjust-add" id="scanAddBtn" data-i18n="scanAddStock">+ Add stock</button>
+          </div>
+          <div class="scan-adjust-panel" id="scanAdjustPanel" hidden>
+            <div class="scan-adjust-title" id="scanAdjustTitle" data-i18n="scanAdjustAddTitle">Add to stock</div>
+            <div class="scan-adjust-row">
+              <button class="qty-step" id="scanAdjDecBtn" aria-label="Decrease adjustment quantity" data-i18n-aria="scanAdjDecAria">âˆ’</button>
+              <input type="number" id="scanAdjustQty" min="1" step="1" value="1" inputmode="numeric" />
+              <button class="qty-step" id="scanAdjIncBtn" aria-label="Increase adjustment quantity" data-i18n-aria="scanAdjIncAria">+</button>
+              <span class="scan-adjust-chips">
+                <button type="button" class="chip" data-chip="5">5</button>
+                <button type="button" class="chip" data-chip="10">10</button>
+                <button type="button" class="chip" data-chip="25">25</button>
+              </span>
+            </div>
+            <div class="scan-adjust-preview" id="scanAdjustPreview"></div>
+            <div class="scan-adjust-btns">
+              <button type="button" class="btn btn-ghost" id="scanAdjustCancel" data-i18n="scanAdjustCancel">Back</button>
+              <button type="button" class="btn btn-primary" id="scanAdjustConfirm" data-i18n="scanAdjustConfirmAdd">Confirm add</button>
+            </div>
+          </div>
+          <div class="scan-result-actions">
+            <span class="spacer"></span>
+            <button class="btn btn-ghost" id="scanSellBtn" data-i18n="sellBtn">Sell</button>
+            <button class="btn btn-ghost" id="scanOpenBtn" data-i18n="openItemBtn">Open item</button>
+            <button class="btn btn-ghost" id="scanAgainBtn" data-i18n="scanAnotherBtn">Scan another</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Record sale -->
+  <div class="modal-backdrop" id="sellBackdrop" hidden>
+    <div class="modal sell-modal" role="dialog" aria-modal="true" aria-labelledby="sellTitle">
+      <div class="modal-header">
+        <h2 id="sellTitle" data-i18n="sellTitle">Record sale</h2>
+        <button class="icon-btn" id="sellClose" aria-label="Close" data-i18n-aria="closeAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="sell-body">
+        <div class="sell-name" id="sellName"></div>
+        <div class="sell-sku" id="sellSku"></div>
+        <div class="sell-stock" id="sellStock"></div>
+        <div class="field sell-qty-row">
+          <label class="field-label" for="sellQty" data-i18n="qtySoldLabel">Quantity sold</label>
+          <input type="number" id="sellQty" min="1" step="1" value="1" />
+        </div>
+        <div class="sell-total"><span data-i18n="totalLabel">Total: </span><strong id="sellTotal"></strong></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="sellCancel" data-i18n="cancelBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="sellConfirm" data-i18n="recordSaleBtn">Record sale</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Best sellers -->
+  <div class="modal-backdrop" id="sellersBackdrop" hidden>
+    <div class="modal sellers-modal" role="dialog" aria-modal="true" aria-labelledby="sellersTitle">
+      <div class="modal-header">
+        <h2 id="sellersTitle" data-i18n="sellersBtn">Best sellers</h2>
+        <button class="icon-btn" id="sellersClose" aria-label="Close best sellers" data-i18n-aria="closeSellersAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="sellers-toolbar">
+        <label class="field-label" for="sellersPeriod" data-i18n="periodLabel">Period</label>
+        <select id="sellersPeriod">
+          <option value="all" data-i18n="periodAll">All time</option>
+          <option value="30" data-i18n="period30">Last 30 days</option>
+          <option value="7" data-i18n="period7">Last 7 days</option>
+          <option value="1" data-i18n="periodToday">Today</option>
+        </select>
+        <span class="spacer"></span>
+        <div class="export-group">
+          <button class="btn btn-ghost" id="sellersExportCsv" title="Export ranking as CSV" data-i18n-title="exportCsvTitle">CSV</button>
+          <button class="btn btn-ghost" id="sellersExportPng" title="Export report as PNG image" data-i18n-title="exportPngTitle">PNG</button>
+          <button class="btn btn-ghost" id="sellersExportJpeg" title="Export report as JPEG image" data-i18n-title="exportJpegTitle">JPEG</button>
+          <button class="btn btn-ghost" id="sellersExportPdf" title="Export report as PDF (print)" data-i18n-title="exportPdfTitle">PDF</button>
+        </div>
+      </div>
+      <div class="sellers-tabs">
+        <button type="button" class="sellers-tab active" data-tab="items" data-i18n="tabItems">Items</button>
+        <button type="button" class="sellers-tab" data-tab="categories" data-i18n="tabCategories">Categories</button>
+      </div>
+      <div class="sellers-summary" id="sellersSummary"></div>
+      <div class="trend-wrap">
+        <div class="trend-head">
+          <span class="field-label" data-i18n="revenueTrend">Revenue trend</span>
+        </div>
+        <canvas id="trendCanvas" height="180" aria-label="Revenue trend chart" data-i18n-aria="revenueTrendAria"></canvas>
+        <p class="trend-empty" id="trendEmpty" hidden data-i18n="noSalesInPeriod">No sales in this period.</p>
+      </div>
+      <div class="category-donut-wrap" id="categoryDonutWrap" hidden>
+        <canvas id="categoryDonutCanvas" height="200" aria-label="Category revenue chart"></canvas>
+        <div class="category-donut-legend" id="categoryDonutLegend"></div>
+      </div>
+      <div class="sellers-list" id="sellersList"></div>
+    </div>
+  </div>
+
+  <!-- Restock list -->
+  <div class="modal-backdrop" id="reorderBackdrop" hidden>
+    <div class="modal sellers-modal" role="dialog" aria-modal="true" aria-labelledby="reorderTitle">
+      <div class="modal-header">
+        <h2 id="reorderTitle" data-i18n="restockListTitle">Restock list</h2>
+        <button class="icon-btn" id="reorderClose" aria-label="Close restock list" data-i18n-aria="closeRestockAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="sellers-toolbar">
+        <label class="field-label" for="reorderCover" data-i18n="coverTargetLabel">Cover target</label>
+        <select id="reorderCover" title="Days of stock to keep on hand (lead time + safety buffer)" data-i18n-title="coverTitle">
+          <option value="14" data-i18n="days14">14 days</option>
+          <option value="30" data-i18n="days30">30 days</option>
+          <option value="60" data-i18n="days60">60 days</option>
+        </select>
+        <span class="spacer"></span>
+        <button class="btn btn-ghost" id="reorderAllBtn" title="Restock every suggested item now" data-i18n-title="restockAllTitle"><span data-i18n="restockAllBtn">Restock all</span></button>
+      </div>
+      <div class="sellers-summary" id="reorderSummary"></div>
+      <div class="sellers-list" id="reorderList"></div>
+    </div>
+  </div>
+
+  <!-- Restock item -->
+  <div class="modal-backdrop" id="restockBackdrop" hidden>
+    <div class="modal sell-modal" role="dialog" aria-modal="true" aria-labelledby="restockTitle">
+      <div class="modal-header">
+        <h2 id="restockTitle" data-i18n="restockItemTitle">Restock item</h2>
+        <button class="icon-btn" id="restockClose" aria-label="Close" data-i18n-aria="closeAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="sell-body">
+        <div class="sell-name" id="restockName"></div>
+        <div class="sell-sku" id="restockSku"></div>
+        <div class="sell-stock" id="restockStock"></div>
+        <div class="field sell-qty-row">
+          <label class="field-label" for="restockQty" data-i18n="qtyReceivedLabel">Quantity received</label>
+          <input type="number" id="restockQty" min="1" step="1" value="1" />
+        </div>
+        <div class="sell-total"><span data-i18n="newStockLabel">New stock: </span><strong id="restockAfter"></strong></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="restockCancel" data-i18n="cancelBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="restockConfirm" data-i18n="receiveBtn">Receive</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk edit -->
+  <div class="modal-backdrop" id="bulkBackdrop" hidden>
+    <div class="modal sell-modal" role="dialog" aria-modal="true" aria-labelledby="bulkTitle">
+      <div class="modal-header">
+        <h2 id="bulkTitle">Bulk edit</h2>
+        <button class="icon-btn" id="bulkClose" aria-label="Close" data-i18n-aria="closeAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="sell-body">
+        <div class="sell-name" id="bulkCount"></div>
+        <div class="field">
+          <label class="field-label" for="bulkCategory" data-i18n="bulkCategoryLabel">Category</label>
+          <select id="bulkCategory">
+            <option value="">â€”</option>
+          </select>
+        </div>
+        <div class="field" style="margin-top: 14px;">
+          <label class="field-label" for="bulkStockMode" data-i18n="bulkStockLabel">Stock</label>
+          <div class="bulk-row">
+            <select id="bulkStockMode">
+              <option value="keep" data-i18n="bulkKeep">Keep</option>
+              <option value="add" data-i18n="bulkStockAdd">Add</option>
+              <option value="sub" data-i18n="bulkStockSub">Subtract</option>
+              <option value="set" data-i18n="bulkStockSet">Set to</option>
+            </select>
+            <input type="number" id="bulkStockQty" min="0" step="1" placeholder="0" disabled />
+          </div>
+        </div>
+        <div class="field" style="margin-top: 14px;">
+          <label class="field-label" for="bulkPriceMode" data-i18n="bulkPriceLabel">Prices</label>
+          <div class="bulk-row">
+            <select id="bulkPriceMode">
+              <option value="keep" data-i18n="bulkKeep">Keep</option>
+              <option value="setUnit" data-i18n="bulkPriceSetUnit">Set unit price</option>
+              <option value="setCost" data-i18n="bulkPriceSetCost">Set cost price</option>
+              <option value="pct" data-i18n="bulkPricePct">Change by %</option>
+            </select>
+            <input type="number" id="bulkPriceQty" min="0" step="0.01" placeholder="0.00" disabled />
+          </div>
+          <p class="field-hint" id="bulkPriceHint" hidden></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="bulkCancel" data-i18n="cancelBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="bulkApply" data-i18n="bulkApply">Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Item code (QR) -->
+  <div class="modal-backdrop" id="codeBackdrop" hidden>
+    <div class="modal code-modal" role="dialog" aria-modal="true" aria-labelledby="codeTitle">
+      <div class="modal-header">
+        <h2 id="codeTitle" data-i18n="codeTitle">Item code</h2>
+        <button class="icon-btn" id="codeClose" aria-label="Close" data-i18n-aria="closeAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="code-content">
+        <div class="code-svg-wrap" id="codeSvg"></div>
+        <div class="code-name" id="codeName"></div>
+        <div class="code-sku" id="codeSku"></div>
+        <div class="code-sub" id="codeSub"></div>
+        <div class="code-actions">
+          <button class="btn btn-ghost" id="copySkuBtn" data-i18n="copySkuBtn">Copy SKU</button>
+          <button class="btn btn-primary" id="printLabelBtn" data-i18n="printLabelBtn">Print label</button>
+        </div>
+        <p class="code-hint" data-i18n="codeHint">Scan with any phone camera or QR reader. The code contains the SKU â€” paste it into the search box to look up or adjust this item.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stock history -->
+  <div class="modal-backdrop" id="historyBackdrop" hidden>
+    <div class="history-panel modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+      <div class="modal-header">
+        <h2 id="historyTitle" data-i18n="historyTitle">Stock history</h2>
+        <button class="icon-btn" id="historyClose" aria-label="Close history" data-i18n-aria="closeHistoryAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="history-toolbar">
+        <select id="historyTypeFilter" aria-label="Filter by activity type" data-i18n-aria="historyFilterAria">
+          <option value="all" data-i18n="allActivity">All activity</option>
+          <option value="added" data-i18n="histAdded">Added</option>
+          <option value="updated" data-i18n="histUpdated">Updated</option>
+          <option value="quantity" data-i18n="histQuantity">Quantity changes</option>
+          <option value="deleted" data-i18n="histDeleted">Deleted</option>
+          <option value="import" data-i18n="histImports">Imports</option>
+          <option value="sold" data-i18n="histSales">Sales</option>
+        </select>
+        <input type="search" id="historySearch" placeholder="Search item name or SKUâ€¦" autocomplete="off" data-i18n-ph="historySearchPlaceholder" />
+        <button class="btn btn-ghost" id="clearHistoryBtn" data-i18n="clearHistoryBtn">Clear history</button>
+      </div>
+      <div class="history-list" id="historyList"></div>
+    </div>
+  </div>
+
+  <!-- Settings (language & currency) -->
+  <div class="modal-backdrop" id="settingsBackdrop" hidden>
+    <div class="modal sell-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="modal-header">
+        <h2 id="settingsTitle" data-i18n="settingsTitle">Settings</h2>
+        <button class="icon-btn" id="settingsClose" aria-label="Close" data-i18n-aria="closeAria">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <div class="sell-body" id="settingsBody">
+        <div class="field">
+          <label class="field-label" for="settingsLang" data-i18n="languageLabel">Language</label>
+          <select id="settingsLang">
+            <option value="en" data-i18n="langEn">English</option>
+            <option value="tl" data-i18n="langTl">Tagalog</option>
+          </select>
+        </div>
+        <div class="field" style="margin-top: 14px;">
+          <label class="field-label" for="settingsCurrency" data-i18n="currencyLabel">Currency</label>
+          <select id="settingsCurrency">
+            <option value="USD" data-i18n="currencyUsd">US Dollar (USD)</option>
+            <option value="PHP" data-i18n="currencyPhp">Philippine Peso (PHP)</option>
+          </select>
+        </div>
+        <div class="field" style="margin-top: 14px;">
+          <label class="field-label" for="settingsRate" data-i18n="rateLabel">Exchange rate (â‚± per $)</label>
+          <input type="number" id="settingsRate" min="0.01" step="0.01" />
+          <p class="field-hint" data-i18n="rateHint">Used to convert supplier invoices between USD and PHP.</p>
+        </div>
+        <div class="field" style="margin-top: 14px;">
+          <label class="field-label" data-i18n="categoriesSection">Categories</label>
+          <p class="field-hint" data-i18n="categoriesHint">Manage the categories used to organize your items.</p>
+          <div class="category-add-row">
+            <input type="text" id="categoryNewName" placeholder="New category name" data-i18n-ph="categoryAddPlaceholder" maxlength="60" autocomplete="off" />
+            <button type="button" class="btn btn-primary" id="categoryAddBtn" data-i18n="categoryAddBtn">Add</button>
+          </div>
+          <div class="category-manager" id="settingsCategoryList"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" id="settingsDone" data-i18n="doneBtn">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Print label (only visible in print output) -->
+  <div id="printArea" aria-hidden="true"></div>
+
+  <!-- Toasts -->
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <!-- Cart (POS) -->
+  <div class="modal-backdrop" id="cartBackdrop" hidden>
+    <div class="cart-drawer" role="dialog" aria-modal="true" aria-labelledby="cartTitle">
+      <div class="modal-header">
+        <h2 id="cartTitle" data-i18n="cartBtn">Cart</h2>
+        <div class="cart-header-actions">
+          <button class="btn btn-ghost btn-sm" id="cartClearBtn" data-i18n="cartClear" title="Clear cart">Clear</button>
+          <button class="icon-btn" id="cartClose" aria-label="Close" data-i18n-aria="closeAria">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="cart-list" id="cartList"></div>
+      <div class="cart-footer">
+        <div class="cart-total-row">
+          <span data-i18n="cartTotal">Total</span>
+          <strong id="cartTotal">$0.00</strong>
+        </div>
+        <button class="btn btn-primary cart-checkout-btn" id="cartCheckoutBtn" disabled data-i18n="cartCheckout">Checkout</button>
+      </div>
+    </div>
+  </div>
+
+<script src="./app.js"></script>
+</body>
+</html>

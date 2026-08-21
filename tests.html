@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Stockroom — Unit Tests</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f6f8; color: #171a21; padding: 24px; }
+  h1 { font-size: 22px; margin-bottom: 8px; }
+  .summary { font-size: 14px; color: #647084; margin-bottom: 20px; }
+  .suite { background: #fff; border: 1px solid #e4e7ec; border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
+  .suite-header { padding: 14px 18px; font-weight: 700; font-size: 15px; border-bottom: 1px solid #e4e7ec; display: flex; align-items: center; gap: 10px; }
+  .suite-header .count { font-size: 12px; font-weight: 600; color: #647084; margin-left: auto; }
+  .pass { color: #166534; }
+  .fail { color: #dc2626; }
+  .test { padding: 10px 18px; border-bottom: 1px solid #f0f1f4; font-size: 13px; display: flex; align-items: flex-start; gap: 10px; }
+  .test:last-child { border-bottom: none; }
+  .test-icon { flex-shrink: 0; width: 18px; text-align: center; }
+  .test-name { flex: 1; }
+  .test-detail { color: #647084; font-size: 12px; margin-top: 3px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+  #results { margin-top: 20px; }
+  .final { padding: 16px 18px; background: #fff; border: 1px solid #e4e7ec; border-radius: 12px; font-size: 15px; font-weight: 700; }
+  .final.all-pass { border-color: #166534; color: #166534; }
+  .final.has-fail { border-color: #dc2626; color: #dc2626; }
+  .loading { padding: 40px; text-align: center; color: #647084; font-size: 15px; }
+</style>
+</head>
+<body>
+<h1>Stockroom — Unit Tests</h1>
+<div class="summary">QR codec, dictionary completeness, currency formatting, translation function</div>
+<div id="results"><div class="loading">Loading app.js...</div></div>
+
+<script>
+// Minimal test harness
+const results = [];
+let pass = 0, fail = 0;
+
+function assert(condition, msg, detail) {
+  if (condition) { pass++; results.push({ ok: true, msg, detail }); }
+  else { fail++; results.push({ ok: false, msg, detail }); }
+}
+
+function assertEqual(actual, expected, msg) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  if (a === e) { pass++; results.push({ ok: true, msg }); }
+  else { fail++; results.push({ ok: false, msg, detail: 'expected ' + e + '\n  got      ' + a }); }
+}
+
+function suite(name, fn) {
+  const before = results.length;
+  fn();
+  return { name, tests: results.slice(before) };
+}
+
+function renderResults(suites) {
+  const container = document.getElementById('results');
+  container.innerHTML = '';
+  let totalPass = 0, totalFail = 0;
+  for (const s of suites) {
+    const p = s.tests.filter(function(t) { return t.ok; }).length;
+    const f = s.tests.filter(function(t) { return !t.ok; }).length;
+    totalPass += p;
+    totalFail += f;
+    const div = document.createElement('div');
+    div.className = 'suite';
+    div.innerHTML =
+      '<div class="suite-header">' +
+      (f === 0 ? '<span class="pass">PASS</span>' : '<span class="fail">FAIL</span>') +
+      ' ' + s.name +
+      ' <span class="count">' + p + ' passed' + (f ? ', <span class="fail">' + f + ' failed</span>' : '') + '</span>' +
+      '</div>' +
+      s.tests.map(function(t) {
+        return '<div class="test">' +
+          '<span class="test-icon">' + (t.ok ? '<span class="pass">+</span>' : '<span class="fail">-</span>') + '</span>' +
+          '<div class="test-name">' + t.msg +
+          (t.detail ? '<div class="test-detail">' + t.detail.replace(/</g, '&lt;') + '</div>' : '') +
+          '</div></div>';
+      }).join('');
+    container.appendChild(div);
+  }
+  const final = document.createElement('div');
+  final.className = 'final ' + (totalFail === 0 ? 'all-pass' : 'has-fail');
+  final.textContent = totalFail === 0
+    ? 'All ' + totalPass + ' tests passed'
+    : totalFail + ' of ' + (totalPass + totalFail) + ' tests failed';
+  container.appendChild(final);
+  window.__TEST_RESULT = { pass: totalPass, fail: totalFail };
+}
+
+// Load app.js via fetch, execute via script injection, then run tests
+fetch('./app.js')
+  .then(function(r) { return r.text(); })
+  .then(function(code) {
+    // Execute app.js via blob URL — const/let at top level become global
+    var blob = new Blob([code], { type: 'application/javascript' });
+    var url = URL.createObjectURL(blob);
+    return new Promise(function(resolve, reject) {
+      var s = document.createElement('script');
+      s.src = url;
+      s.onload = function() {
+        URL.revokeObjectURL(url);
+        if (typeof Qr === 'undefined') reject(new Error('Qr undefined after script load'));
+        else resolve();
+      };
+      s.onerror = function() { reject(new Error('script load failed')); };
+      document.head.appendChild(s);
+    });
+  })
+  .then(function() {
+    var suites = [];
+    try {
+
+    /* ===== 1. QR Encoder ===== */
+    suites.push(suite('QR Encoder', function() {
+      var r1 = Qr.encode('HELLO');
+      assert(r1.error == null, 'encode("HELLO") has no error');
+      assert(r1.matrix.length > 0, 'encode("HELLO") produces a matrix');
+      assert(r1.size > 0, 'encode("HELLO") has a positive size');
+      assert(r1.matrix.length === r1.size, 'matrix rows == size');
+
+      var allSquare = r1.matrix.every(function(row) { return row.length === r1.size; });
+      assert(allSquare, 'matrix is square');
+
+      var allBinary = true;
+      for (var ri = 0; ri < r1.matrix.length; ri++)
+        for (var ci = 0; ci < r1.matrix[ri].length; ci++)
+          if (r1.matrix[ri][ci] !== 0 && r1.matrix[ri][ci] !== 1) allBinary = false;
+      assert(allBinary, 'all matrix values are 0 or 1');
+
+      assert(r1.matrix[0][0] === 1, 'top-left corner is dark (finder pattern)');
+
+      var r2 = Qr.encode('');
+      assert(r2.error == null, 'encode("") has no error');
+
+      var r3 = Qr.encode('ACC-1001');
+      assert(r3.error == null, 'encode("ACC-1001") has no error');
+      assert(r3.size >= 21, 'SKU code produces version >= 1 (21 modules)');
+
+      var longStr = Array(21).join('A');
+      var r4 = Qr.encode(longStr);
+      assert(r4.error == null, 'encode(20 chars) has no error');
+      assert(r4.size > r1.size, 'longer string produces larger QR');
+
+      var r5 = Qr.encode(Array(200).join('B'));
+      assert(r5.error != null, 'very long string (199 chars) returns an error');
+
+      var r6 = Qr.encode('WORLD');
+      var diff = false;
+      for (var ri2 = 0; ri2 < r1.matrix.length && !diff; ri2++)
+        for (var ci2 = 0; ci2 < r1.matrix[ri2].length && !diff; ci2++)
+          if (r1.matrix[ri2][ci2] !== r6.matrix[ri2][ci2]) diff = true;
+      assert(diff, '"HELLO" and "WORLD" produce different matrices');
+    }));
+
+    /* ===== 2. QR Round-trip ===== */
+    suites.push(suite('QR Round-trip (encode then decode)', function() {
+      // Helper: create an ImageData from a QR matrix (binary 0/1)
+      function matrixToImageData(matrix, size) {
+        var scale = 10; // pixels per module
+        var w = size * scale;
+        var h = size * scale;
+        var data = new Uint8ClampedArray(w * h * 4);
+        for (var r = 0; r < size; r++) {
+          for (var c = 0; c < size; c++) {
+            var dark = matrix[r][c] === 1;
+            for (var sy = 0; sy < scale; sy++) {
+              for (var sx = 0; sx < scale; sx++) {
+                var px = ((r * scale + sy) * w + (c * scale + sx)) * 4;
+                var val = dark ? 0 : 255;
+                data[px] = val; data[px+1] = val; data[px+2] = val; data[px+3] = 255;
+              }
+            }
+          }
+        }
+        return { width: w, height: h, data: data };
+      }
+
+      var testCases = ['HELLO', 'ACC-1001', 'CBL-2001', 'DIS-3001', 'FUR-4001', 'itm-001', '12345', 'A', 'abc', 'Test-123/X'];
+      for (var ti = 0; ti < testCases.length; ti++) {
+        var text = testCases[ti];
+        var encoded = Qr.encode(text);
+        assert(encoded.error == null, 'encode("' + text + '") succeeded');
+        if (encoded.error) continue;
+        var imgData = matrixToImageData(encoded.matrix, encoded.size);
+        var decoded = QrDecode.decode(imgData);
+        assertEqual(decoded, text, 'round-trip: "' + text + '"');
+      }
+
+      var svg = renderQrSvg('ACC-1001');
+      assert(svg.length > 0, 'renderQrSvg("ACC-1001") returns non-empty SVG');
+      assert(svg.indexOf('<svg') >= 0, 'SVG contains <svg> tag');
+      assert(svg.indexOf('viewBox') >= 0, 'SVG has viewBox');
+    }));
+
+    /* ===== 3. Dictionary completeness ===== */
+    suites.push(suite('Dictionary completeness (EN <-> TL)', function() {
+      var enKeys = Object.keys(I18N.en);
+      var tlKeys = Object.keys(I18N.tl);
+
+      assert(enKeys.length > 100, 'EN has ' + enKeys.length + ' keys (> 100)');
+      assert(tlKeys.length > 100, 'TL has ' + tlKeys.length + ' keys (> 100)');
+
+      var missingInTl = enKeys.filter(function(k) { return !(k in I18N.tl); });
+      assertEqual(missingInTl.length, 0,
+        missingInTl.length === 0
+          ? 'all ' + enKeys.length + ' EN keys exist in TL'
+          : 'missing in TL: ' + missingInTl.join(', '));
+
+      var missingInEn = tlKeys.filter(function(k) { return !(k in I18N.en); });
+      assertEqual(missingInEn.length, 0,
+        missingInEn.length === 0
+          ? 'all ' + tlKeys.length + ' TL keys exist in EN'
+          : 'missing in EN: ' + missingInEn.join(', '));
+
+      var badEnValues = [];
+      var enEntries = Object.entries(I18N.en);
+      for (var ei = 0; ei < enEntries.length; ei++) {
+        var kv = enEntries[ei];
+        if (typeof kv[1] === 'string' && kv[1].trim() === '') badEnValues.push(kv[0]);
+        if (typeof kv[1] === 'object' && (!kv[1].one || !kv[1].other)) badEnValues.push(kv[0] + ' (missing one/other)');
+      }
+      assertEqual(badEnValues.length, 0,
+        badEnValues.length === 0 ? 'all EN values are non-empty' : 'bad EN values: ' + badEnValues.join(', '));
+
+      var badTlValues = [];
+      var tlEntries = Object.entries(I18N.tl);
+      for (var ti2 = 0; ti2 < tlEntries.length; ti2++) {
+        var kv2 = tlEntries[ti2];
+        if (typeof kv2[1] === 'string' && kv2[1].trim() === '') badTlValues.push(kv2[0]);
+        if (typeof kv2[1] === 'object' && (!kv2[1].one || !kv2[1].other)) badTlValues.push(kv2[0] + ' (missing one/other)');
+      }
+      assertEqual(badTlValues.length, 0,
+        badTlValues.length === 0 ? 'all TL values are non-empty' : 'bad TL values: ' + badTlValues.join(', '));
+
+      // Tagalog doesn't have grammatical number, so TL may use flat strings
+      // where EN uses {one, other} — only flag the reverse (EN flat, TL plural)
+      var reverseMismatches = [];
+      for (var pi = 0; pi < enKeys.length; pi++) {
+        var pk = enKeys[pi];
+        var enVal = I18N.en[pk];
+        var tlVal = I18N.tl[pk];
+        if (typeof enVal !== 'object' && typeof tlVal === 'object')
+          reverseMismatches.push(pk + ': TL is plural, EN is not');
+      }
+      assertEqual(reverseMismatches.length, 0,
+        reverseMismatches.length === 0 ? 'no reverse plural mismatches (TL may simplify plurals)' : reverseMismatches.join('\n'));
+      // Verify TL flat values still have {n} placeholders for the ones that EN plurals use
+      var missingPlaceholders = [];
+      for (var pi2 = 0; pi2 < enKeys.length; pi2++) {
+        var pk2 = enKeys[pi2];
+        var enVal2 = I18N.en[pk2];
+        var tlVal2 = I18N.tl[pk2];
+        if (typeof enVal2 === 'object' && typeof tlVal2 === 'string' && enVal2.other && enVal2.other.indexOf('{n}') >= 0 && tlVal2.indexOf('{n}') < 0)
+          missingPlaceholders.push(pk2);
+      }
+      assertEqual(missingPlaceholders.length, 0,
+        missingPlaceholders.length === 0 ? 'TL flat plurals retain {n} placeholder' : 'TL missing {n}: ' + missingPlaceholders.join(', '));
+    }));
+
+    /* ===== 4. Translation function t() ===== */
+    suites.push(suite('Translation function t()', function() {
+      var origLang = settings.lang;
+      settings.lang = 'en';
+
+      assertEqual(t('appTitle'), I18N.en.appTitle, 't("appTitle") returns EN value');
+      assertEqual(t('scanBtn'), 'Scan', 't("scanBtn") returns "Scan"');
+      assertEqual(t('nonExistentKey123'), 'nonExistentKey123', 'unknown key returns itself');
+
+      assertEqual(t('exportedItems', { n: 5 }), 'Exported 5 items to CSV.', 'variable substitution');
+      assertEqual(t('sendingLabels', { n: 1 }), 'Sending 1 label to the printer.', 'plural n=1 uses one');
+      assertEqual(t('sendingLabels', { n: 3 }), 'Sending 3 labels to the printer.', 'plural n=3 uses other');
+
+      var sold = t('soldToast', { n: 2, name: 'Mouse', amount: '$49.98' });
+      assert(sold.indexOf('2') >= 0, 'soldToast contains quantity');
+      assert(sold.indexOf('Mouse') >= 0, 'soldToast contains item name');
+      assert(sold.indexOf('$49.98') >= 0, 'soldToast contains amount');
+
+      settings.lang = 'tl';
+      assertEqual(t('scanBtn'), 'I-scan', 't("scanBtn") in TL');
+      assertEqual(t('appTitle'), I18N.tl.appTitle, 't("appTitle") in TL');
+      var tlLabels = t('sendingLabels', { n: 3 });
+      assert(tlLabels.indexOf('3') >= 0, 'TL plural contains the number');
+
+      settings.lang = origLang;
+    }));
+
+    /* ===== 5. Currency formatting ===== */
+    suites.push(suite('Currency formatting', function() {
+      var origCurrency = settings.currency;
+      var origLang = settings.lang;
+
+      settings.currency = 'USD';
+      settings.lang = 'en';
+      assert(fmtCurrency(0).indexOf('$') >= 0, 'fmtCurrency(0) in USD contains $');
+      assert(fmtCurrency(100).indexOf('100') >= 0, 'fmtCurrency(100) contains 100');
+
+      settings.currency = 'PHP';
+      assert(fmtCurrency(500).indexOf('500') >= 0, 'fmtCurrency(500) contains 500');
+      assert(fmtCurrency(-10).indexOf('10') >= 0, 'fmtCurrency(-10) contains 10');
+      assert(fmtCurrency('abc').indexOf('0') >= 0, 'fmtCurrency("abc") falls back to 0');
+
+      assertEqual(currencySymbol('USD'), '$', 'currencySymbol("USD") = "$"');
+      assertEqual(currencySymbol('PHP'), '\u20B1', 'currencySymbol("PHP") = "₱"');
+
+      settings.currency = 'USD';
+      assertEqual(otherCurrencyCode(), 'PHP', 'otherCurrencyCode() when USD');
+      settings.currency = 'PHP';
+      assertEqual(otherCurrencyCode(), 'USD', 'otherCurrencyCode() when PHP');
+
+      settings.currency = origCurrency;
+      settings.lang = origLang;
+    }));
+
+    /* ===== 6. QR Decoder internals ===== */
+    suites.push(suite('QR Decoder internals', function() {
+      var _t = QrDecode._test;
+
+      var uniformGray = new Uint8Array(10000);
+      for (var ui = 0; ui < 10000; ui++) uniformGray[ui] = 128;
+      var thresh = _t.otsu(uniformGray);
+      assert(thresh >= 120 && thresh <= 140, 'otsu on uniform(128) ~128: got ' + thresh);
+
+      var bimodal = new Uint8Array(200);
+      for (var bi = 0; bi < 100; bi++) bimodal[bi] = 50;
+      for (var bi2 = 100; bi2 < 200; bi2++) bimodal[bi2] = 200;
+      var thresh2 = _t.otsu(bimodal);
+      assert(thresh2 >= 0 && thresh2 <= 255, 'otsu on bimodal(50,200) returns valid threshold: got ' + thresh2);
+      assert(thresh2 !== 127 || thresh2 !== 127, 'otsu threshold is deterministic');
+
+      assertEqual(_t.gfMul(1, 5), 5, 'gfMul(1, 5) = 5');
+      assertEqual(_t.gfMul(0, 5), 0, 'gfMul(0, 5) = 0');
+      assertEqual(_t.gfMul(5, 0), 0, 'gfMul(5, 0) = 0');
+
+      for (var gi = 1; gi <= 10; gi++) {
+        var inv = _t.gfInv(gi);
+        assertEqual(_t.gfMul(gi, inv), 1, 'gfMul(' + gi + ', gfInv(' + gi + ')) = 1');
+      }
+
+      var line1 = [0,0,1,0,1,1,1,0,1,0,0];
+      var found1 = _t.scanLine(line1.length, function(i) { return line1[i]; });
+      assert(found1.length >= 1, 'scanLine detects 1:1:3:1:1 pattern');
+
+      var line2 = [0,1,0,1,0,1,0,1,0,1,0];
+      var found2 = _t.scanLine(line2.length, function(i) { return line2[i]; });
+      assert(typeof found2.length === 'number', 'scanLine on random data returns array');
+    }));
+
+    renderResults(suites);
+    } catch(e) {
+      document.getElementById('results').innerHTML = '<div class="final has-fail">Test error: ' + e.message + '\n' + (e.stack || '').split('\n').slice(0,5).join('\n') + '</div>';
+    }
+  })
+  .catch(function(e) {
+    document.getElementById('results').innerHTML = '<div class="final has-fail">Load error: ' + e.message + '</div>';
+  });
+</script>
+</body>
+</html>

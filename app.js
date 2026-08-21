@@ -1,0 +1,4968 @@
+'use strict';
+
+/* ============================================================
+   Stockroom — a small client-side inventory manager
+   Data model: { id, name, sku, category, quantity, unitPrice,
+                 minStock, location, updatedAt }
+   Persistence: localStorage (no server required).
+   ============================================================ */
+
+const STORAGE_KEY = 'freebuff.inventory.items.v1';
+
+/* ---------- Sample data ---------- */
+
+const SAMPLE_ITEMS = [
+  { id: 'itm-001', name: 'Wireless Mouse', sku: 'ACC-1001', category: 'Electronics', quantity: 42, unitPrice: 24.99, costPrice: 14.99, minStock: 10, location: 'A-01' },
+  { id: 'itm-002', name: 'Mechanical Keyboard', sku: 'ACC-1002', category: 'Electronics', quantity: 8, unitPrice: 89.50, costPrice: 52.00, minStock: 10, location: 'A-02' },
+  { id: 'itm-003', name: 'USB-C Cable 1m', sku: 'CBL-2001', category: 'Accessories', quantity: 120, unitPrice: 9.99, costPrice: 5.50, minStock: 25, location: 'B-01' },
+  { id: 'itm-004', name: '27" Monitor', sku: 'DIS-3001', category: 'Electronics', quantity: 3, unitPrice: 279.00, costPrice: 195.00, minStock: 5, location: 'A-03' },
+  { id: 'itm-005', name: 'Desk Chair', sku: 'FUR-4001', category: 'Furniture', quantity: 15, unitPrice: 149.00, costPrice: 92.00, minStock: 3, location: 'C-01' },
+  { id: 'itm-006', name: 'Laptop Stand', sku: 'ACC-1003', category: 'Accessories', quantity: 0, unitPrice: 34.50, costPrice: 21.00, minStock: 8, location: 'B-02' },
+];
+
+/* ---------- State ---------- */
+
+let items = loadItems();
+
+const state = {
+  search: '',
+  category: 'all',
+  lowStockOnly: false,
+  sortKey: 'name',
+  sortDir: 'asc',
+  historyType: 'all',
+  historySearch: '',
+};
+
+/* ---------- Small helpers ---------- */
+
+const $ = (sel) => document.querySelector(sel);
+
+function uid(prefix = 'itm') {
+  return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+}
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function fmtCurrency(n) {
+  const value = Number(n) || 0;
+  try {
+    return value.toLocaleString(uiLocale(), { style: 'currency', currency: settings.currency });
+  } catch (e) {
+    return (settings.currency === 'PHP' ? '₱' : '$') + value.toFixed(2);
+  }
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString(uiLocale(), { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function isLowStock(item) {
+  return item.quantity <= (Number(item.minStock) || 0);
+}
+
+/* ---------- Settings: language & currency ---------- */
+
+const SETTINGS_KEY = 'freebuff.inventory.settings.v1';
+const DEFAULT_RATE = 56; // PHP per 1 USD — user-adjustable in Settings
+
+const I18N = {
+  en: {
+    appTitle: 'Stockroom — Inventory Manager',
+    appTagline: 'Inventory manager',
+    searchPlaceholder: 'Search name or SKU…',
+    scanBtn: 'Scan',
+    scanBtnTitle: 'Scan a printed label with your camera',
+    settingsBtnTitle: 'Settings',
+    settingsBtnAria: 'Open settings',
+    installBtnTitle: 'Install app',
+    installBtnAria: 'Install app',
+    installHint: 'Add Stockroom to your home screen: tap Share, then “Add to Home Screen”.',
+    themeDarkTitle: 'Switch to dark mode',
+    themeLightTitle: 'Switch to light mode',
+    themeToggleAria: 'Toggle dark mode',
+    statItems: 'Items',
+    statUnits: 'Units in stock',
+    statLowStock: 'Low stock',
+    statToReorder: 'To reorder',
+    statInventoryValue: 'Inventory value',
+    statTopSeller: 'Top seller',
+    xSoldShort: '{n} sold',
+    statsAria: 'Inventory summary',
+    toolbarAria: 'Item controls',
+    categoryLabel: 'Category',
+    allCategories: 'All categories',
+    lowStockOnly: 'Low stock only',
+    historyBtn: 'History',
+    historyBtnTitle: 'View stock history',
+    sellersBtn: 'Best sellers',
+    sellersBtnTitle: 'See best-selling items',
+    reorderBtn: 'Reorder',
+    reorderBtnTitle: 'Check which items need reordering',
+    reorderBtnTitleN: { one: '1 item needs reordering', other: '{n} items need reordering' },
+    exportCsvBtn: 'Export CSV',
+    exportCsvBtnTitle: 'Download items as CSV',
+    importCsvBtn: 'Import CSV',
+    importCsvBtnTitle: 'Import items from a CSV file',
+    printLabelsBtn: 'Print labels',
+    printLabelsBtnTitle: 'Print QR labels for selected items',
+    printLabelsBtnTitleN: { one: 'Print 1 label', other: 'Print {n} labels' },
+    countSheetBtn: 'Count sheet',
+    countSheetBtnTitle: 'Print a stock-take count sheet',
+    countSheetTitle: 'Stock count sheet',
+    countSheetItems: { one: 'item', other: 'items' },
+    countSheetExpected: 'Expected',
+    countSheetCounted: 'Counted',
+    countSheetVariance: 'Variance',
+    countSheetTotal: 'Total expected value',
+    countSheetCountedBy: 'Counted by',
+    countSheetVerifiedBy: 'Verified by',
+    countSheetDate: 'Date',
+    countSheetEmpty: 'Nothing to count — the current view is empty.',
+    countSheetToast: { one: 'Stock-take sheet with 1 item sent to the printer.', other: 'Stock-take sheet with {n} items sent to the printer.' },
+    clearSelBtn: 'Clear',
+    clearSelBtnTitle: 'Clear selection',
+    bulkBtn: 'Bulk edit',
+    bulkBtnTitle: 'Edit category, stock, or prices for selected items',
+    bulkTitleN: { one: 'Bulk edit {n} item', other: 'Bulk edit {n} items' },
+    bulkCategoryLabel: 'Category',
+    bulkStockLabel: 'Stock',
+    bulkPriceLabel: 'Prices',
+    bulkKeep: 'Keep',
+    bulkStockAdd: 'Add',
+    bulkStockSub: 'Subtract',
+    bulkStockSet: 'Set to',
+    bulkPriceSetUnit: 'Set unit price',
+    bulkPriceSetCost: 'Set cost price',
+    bulkPricePct: 'Change by %',
+    bulkPricePctHint: 'Applies to both unit and cost price.',
+    bulkPriceReq: 'Enter a number',
+    bulkStockReq: 'Enter a quantity',
+    bulkNoChange: 'Nothing to change — pick a category, stock, or price action.',
+    bulkApply: 'Apply',
+    bulkToast: 'Updated {n} item(s).',
+    bulkDetail: 'Bulk edit',
+    bulkSummary: 'Bulk edit: {n} item(s) updated',
+    addItemBtn: 'Add item',
+    chipsAll: 'All',
+    chipsAria: 'Filter by category',
+    thItem: 'Item',
+    thCategory: 'Category',
+    thInStock: 'In stock',
+    thUnitPrice: 'Unit price',
+    thValue: 'Value',
+    thLocation: 'Location',
+    thUpdated: 'Updated',
+    thSelect: 'Select',
+    selectAllAria: 'Select all visible items',
+    actionsAria: 'Actions',
+    badgeOut: 'Out of stock',
+    badgeLow: 'Low',
+    badgeScanned: 'Scanned',
+    decreaseQty: 'Decrease quantity',
+    increaseQty: 'Increase quantity',
+    sellBtnTitle: 'Record a sale',
+    outOfStockSell: 'Out of stock — restock to sell',
+    viewQr: 'View QR code',
+    editItemTitle: 'Edit item',
+    deleteItemTitle: 'Delete item',
+    selectItemAria: 'Select {name}',
+    decQtyAria: 'Decrease quantity of {name}',
+    incQtyAria: 'Increase quantity of {name}',
+    sellAria: 'Record sale for {name}',
+    qrAria: 'QR code for {name}',
+    editAria: 'Edit {name}',
+    deleteAria: 'Delete {name}',
+    emptyNoItems: 'No items yet',
+    emptyAddFirst: 'Add your first item to get started.',
+    emptyNoMatch: 'No matching items',
+    emptyTrySearch: 'Try a different search or clear the filters.',
+    loadSampleData: 'Load sample data',
+    footnote: 'Data stays on this device — the app works fully offline with no server. Use Export CSV to back it up or move it elsewhere.',
+    modalAddTitle: 'Add item',
+    modalEditTitle: 'Edit item',
+    closeAria: 'Close',
+    fNameLabel: 'Item name *',
+    fNamePlaceholder: 'e.g. Wireless Mouse',
+    skuLabel: 'SKU',
+    skuPlaceholder: 'e.g. ACC-1001',
+    categoryPlaceholder: 'e.g. Electronics',
+    quantityLabel: 'Quantity *',
+    unitPriceLabel: 'Unit price',
+    minStockLabel: 'Min stock',
+    minStockHint: 'Quantities at or below this are flagged as low.',
+    costLabel: 'Cost price',
+    fInvoiceLabel: 'Invoice amount',
+    marginHint: 'Margin: {pct}%',
+    costAbovePrice: 'Cost price is above the unit price.',
+    locationLabel: 'Location',
+    locationPlaceholder: 'e.g. A-01',
+    cancelBtn: 'Cancel',
+    saveItemBtn: 'Save item',
+    saveChangesBtn: 'Save changes',
+    reqFieldsError: 'Please fill in the required fields.',
+    scanTitle: 'Scan label',
+    closeScannerAria: 'Close scanner',
+    startingCamera: 'Starting camera…',
+    scanDecAria: 'Decrease scanned item quantity',
+    scanIncAria: 'Increase scanned item quantity',
+    sellBtn: 'Sell',
+    openItemBtn: 'Open item',
+    scanAnotherBtn: 'Scan another',
+    scanManualPlaceholder: 'or type / paste a SKU or code',
+    scanLookupBtn: 'Look up',
+    scanAddStock: '+ Add stock',
+    scanRemoveStock: '− Remove stock',
+    scanAdjustAddTitle: 'Add to stock',
+    scanAdjustRemoveTitle: 'Remove from stock',
+    scanAdjDecAria: 'Decrease adjustment quantity',
+    scanAdjIncAria: 'Increase adjustment quantity',
+    scanAdjustCancel: 'Back',
+    scanAdjustConfirmAdd: 'Confirm add',
+    scanAdjustConfirmRemove: 'Confirm remove',
+    scanNewStock: 'New stock: ',
+    scanQtyInvalid: 'Enter a quantity of at least 1.',
+    scanRemoveExceeds: 'Only {n} in stock — removed amount will be clamped.',
+    scanAddToast: 'Added {n} to {name}. Stock: {total}',
+    scanRemoveToast: 'Removed {n} from {name}. Stock: {total}',
+    histViaScan: 'via scan',
+    pointCamera: 'Point the camera at a printed label…',
+    builtinDecoder: 'Built-in decoder — point the camera at a printed label…',
+    cameraDenied: 'Camera permission was denied. Allow camera access and try again.',
+    cameraCouldNotStart: 'Camera could not be started.',
+    cameraUnavailable: 'Camera unavailable: {reason}',
+    codeNoMatch: 'Code “{code}” doesn\'t match any item.',
+    sellTitle: 'Record sale',
+    qtySoldLabel: 'Quantity sold',
+    totalLabel: 'Total: ',
+    recordSaleBtn: 'Record sale',
+    outOfStockSellToast: 'Out of stock — nothing to sell.',
+    cartBtn: 'Cart',
+    cartBtnTitle: 'Open cart',
+    cartEmpty: 'Cart is empty',
+    cartEmptyHint: 'Tap the cart icon on any item row to add it.',
+    cartAddToast: 'Added {name} to cart.',
+    cartRemoveToast: 'Removed {name} from cart.',
+    cartItemSubtotal: '{qty} × {price}',
+    cartTotal: 'Total',
+    cartCheckout: 'Checkout',
+    cartClear: 'Clear cart',
+    cartClearConfirm: 'Remove all items from the cart?',
+    cartToastN: { one: 'Sold 1 item for {amount}.', other: 'Sold {n} items for {amount}.' },
+    cartReceiptTitle: 'Sale complete',
+    cartReceiptItems: '{n} item(s)',
+    undoBtn: 'Undo',
+    undoDone: 'Undone: {action}.',
+    undoDeleteItem: 'delete "{name}"',
+    undoBulkEdit: 'bulk edit ({n} items)',
+    undoSale: 'sale of {n} item(s)',
+    undoCartCheckout: 'cart checkout ({n} items)',
+    undoClearHistory: 'clear history',
+    cartAddBtn: 'Add to cart',
+    cartAddBtnTitle: 'Add to cart',
+    itemGone: 'This item no longer exists.',
+    enterQtySell: 'Enter a quantity to sell.',
+    inStockEach: '{n} in stock · {price} each',
+    limitedTo: ' (limited to {n} in stock)',
+    skuPrefix: 'SKU: {sku}',
+    soldToast: 'Sold {n} × {name} — {amount}.',
+    closeSellersAria: 'Close best sellers',
+    periodLabel: 'Period',
+    periodAll: 'All time',
+    period30: 'Last 30 days',
+    period7: 'Last 7 days',
+    periodToday: 'Today',
+    periodLastN: 'Last {n} days',
+    exportCsvTitle: 'Export ranking as CSV',
+    exportPngTitle: 'Export report as PNG image',
+    exportJpegTitle: 'Export report as JPEG image',
+    exportPdfTitle: 'Export report as PDF (print)',
+    revenueTrend: 'Revenue trend',
+    noSalesInPeriod: 'No sales in this period.',
+    unitsSoldWord: 'units sold',
+    revenueWord: 'revenue',
+    soldWord: 'sold',
+    noSalesYet: 'No sales recorded yet. Use the cart icon on any item row (or the Sell button after a scan) to record one.',
+    nothingToExport: 'Nothing to export yet.',
+    sellersExported: 'Best sellers exported.',
+    sellersExportedFmt: 'Best sellers exported as {fmt}.',
+    pdfDialogHint: 'Opening print dialog — choose “Save as PDF” for a PDF copy.',
+    tabItems: 'Items',
+    tabCategories: 'Categories',
+    catRank: 'Category ranking',
+    catUnitsSold: '{n} units sold',
+    catRevenue: '{n} revenue',
+    catItemsInCat: { one: '1 item', other: '{n} items' },
+    catShareOfTotal: '{pct}% of total',
+    catChangeUp: '↑ {pct}%',
+    catChangeDown: '↓ {pct}%',
+    catChangeFlat: '—',
+    catPrevLabel: 'vs prev. period',
+    catNewCategory: 'new',
+    catExpandHint: 'Click to expand',
+    reportTitle: 'Stockroom — Best sellers',
+    exportedOn: 'Exported {date}',
+    colRank: 'Rank',
+    colItem: 'Item',
+    colSku: 'SKU',
+    colUnitsSold: 'Units sold',
+    colRevenue: 'Revenue',
+    generatedBy: 'Generated by Stockroom — works fully offline',
+    chartNoSales: 'No sales in this period',
+    revenueTrendAria: 'Revenue trend chart',
+    restockListTitle: 'Restock list',
+    closeRestockAria: 'Close restock list',
+    coverTargetLabel: 'Cover target',
+    coverTitle: 'Days of stock to keep on hand (lead time + safety buffer)',
+    days14: '14 days',
+    days30: '30 days',
+    days60: '60 days',
+    restockAllBtn: 'Restock all',
+    restockAllTitle: 'Restock every suggested item now',
+    restockNeed: { one: 'item needs restocking', other: 'items need restocking' },
+    restockUnits: { one: 'unit suggested', other: 'units suggested' },
+    restockBased: 'based on the last {days} days',
+    nothingNeedsReorder: 'Nothing needs reordering — inventory is in good shape.',
+    noReorderNow: 'No items need reordering right now. Stock levels are healthy.',
+    inStockShort: '{n} in stock',
+    perDay: '{vel}/day',
+    daysLeft: '{n} days left',
+    reorderAt: 'reorder at {n}',
+    orderN: 'Order {n}',
+    restockBtn: 'Restock',
+    restockItemTitle: 'Restock item',
+    qtyReceivedLabel: 'Quantity received',
+    newStockLabel: 'New stock: ',
+    receiveBtn: 'Receive',
+    enterQtyReceive: 'Enter a quantity to receive.',
+    receivedToast: 'Received {n} × {name}.',
+    nothingToRestock: 'Nothing to restock.',
+    restockAllConfirm: 'Restock all {n} items with the suggested {qty} units?',
+    restockDoneToast: 'Received suggested quantities for {n} items.',
+    restockTag: 'Restock',
+    codeTitle: 'Item code',
+    copySkuBtn: 'Copy SKU',
+    printLabelBtn: 'Print label',
+    codeHint: 'Scan with any phone camera or QR reader. The code contains the SKU — paste it into the search box to look up or adjust this item.',
+    codeTooLong: 'Code is too long to encode.',
+    skuCopied: 'SKU copied to clipboard.',
+    copyFailed: 'Could not copy — select the SKU manually.',
+    codeSub: '{loc} · Code: {value}',
+    historyTitle: 'Stock history',
+    closeHistoryAria: 'Close history',
+    historyFilterAria: 'Filter by activity type',
+    allActivity: 'All activity',
+    histAdded: 'Added',
+    histUpdated: 'Updated',
+    histQuantity: 'Quantity changes',
+    histDeleted: 'Deleted',
+    histImports: 'Imports',
+    histSales: 'Sales',
+    historySearchPlaceholder: 'Search item name or SKU…',
+    clearHistoryBtn: 'Clear history',
+    typeAdded: 'Added',
+    typeUpdated: 'Updated',
+    typeQuantity: 'Quantity change',
+    typeDeleted: 'Deleted',
+    typeImport: 'Import',
+    typeSold: 'Sale',
+    typeBulk: 'Bulk edit',
+    bulkSelected: { one: '{n} item selected', other: '{n} items selected' },
+    justNow: 'just now',
+    mAgo: '{n}m ago',
+    hAgo: '{n}h ago',
+    dAgo: '{n}d ago',
+    histAddedWith: 'Added with {n} in stock',
+    histQtyChange: 'Quantity {a} → {b}',
+    histDetailsUpdated: 'Details updated',
+    histRemoved: 'Removed (was {n} in stock)',
+    histSoldUnits: { one: 'Sold 1 unit', other: 'Sold {n} units' },
+    histSoldFor: { one: 'Sold 1 unit for {amount}', other: 'Sold {n} units for {amount}' },
+    histCsvImport: 'CSV import',
+    histNoActivity: 'No activity recorded yet.',
+    histNoMatch: 'No matching entries.',
+    histCleared: 'History cleared.',
+    clearHistoryConfirm: 'Clear the entire stock history? This cannot be undone.',
+    itemUpdated: 'Item updated.',
+    itemAdded: 'Item added.',
+    qtyBelowZero: 'Quantity cannot go below zero.',
+    itemDeleted: 'Item deleted.',
+    deleteConfirm: 'Delete “{name}” from inventory?',
+    exportedItems: { one: 'Exported 1 item to CSV.', other: 'Exported {n} items to CSV.' },
+    csvNeedsHeader: 'CSV needs a header row plus at least one item.',
+    importComplete: 'Import complete — {detail}.',
+    addedShort: '{n} added',
+    updatedShort: '{n} updated',
+    skippedShort: '{n} skipped',
+    noChanges: 'no changes',
+    importFailed: 'Import failed: {msg}',
+    selectAtLeastOne: 'Select at least one item to print.',
+    sendingLabels: { one: 'Sending 1 label to the printer.', other: 'Sending {n} labels to the printer.' },
+    saveFailed: 'Could not save: {msg}',
+    darkModeOn: 'Dark mode on.',
+    lightModeOn: 'Light mode on.',
+    sampleLoaded: 'Sample data loaded.',
+    replaceSample: 'Replace current items with the sample data?',
+    loadedSampleHistory: 'Loaded {n} sample items',
+    csvName: 'Name',
+    csvSku: 'SKU',
+    csvCategory: 'Category',
+    csvQuantity: 'Quantity',
+    csvUnitPrice: 'Unit Price',
+    csvCostPrice: 'Cost Price',
+    csvMinStock: 'Min Stock',
+    csvLocation: 'Location',
+    settingsTitle: 'Settings',
+    languageLabel: 'Language',
+    langEn: 'English',
+    langTl: 'Tagalog',
+    currencyLabel: 'Currency',
+    currencyUsd: 'US Dollar (USD)',
+    currencyPhp: 'Philippine Peso (PHP)',
+    rateLabel: 'Exchange rate (₱ per $)',
+    rateHint: 'Used to convert supplier invoices between USD and PHP.',
+    doneBtn: 'Done',
+    settingsSaved: 'Settings saved.',
+    categoriesSection: 'Categories',
+    categoriesHint: 'Manage the categories used to organize your items.',
+    categoryAddPlaceholder: 'New category name',
+    categoryAddBtn: 'Add',
+    categoriesEmpty: 'No categories yet — add one above, or type one in the item form.',
+    categoryItemCount: { one: '1 item', other: '{n} items' },
+    categoryEdit: 'Rename',
+    categoryDelete: 'Delete',
+    categoryEditAria: 'Rename {name}',
+    categoryDeleteAria: 'Delete {name}',
+    categoryNameEmpty: 'Enter a category name.',
+    categoryDuplicate: 'A category with that name already exists.',
+    categoryAddedToast: 'Category “{name}” added.',
+    categoryRenamedToast: 'Category renamed to “{name}”.',
+    categoryDeletedToast: 'Category “{name}” deleted.',
+    categoryDeleteConfirm: 'Delete category “{name}” and remove it from {n} item(s)?',
+  },
+  tl: {
+    appTitle: 'Stockroom — Pamamahala ng Imbentaryo',
+    appTagline: 'Pamamahala ng imbentaryo',
+    searchPlaceholder: 'Maghanap ng pangalan o SKU…',
+    scanBtn: 'I-scan',
+    scanBtnTitle: 'I-scan ang naka-print na label gamit ang iyong camera',
+    settingsBtnTitle: 'Mga setting',
+    settingsBtnAria: 'Buksan ang mga setting',
+    installBtnTitle: 'I-install ang app',
+    installBtnAria: 'I-install ang app',
+    installHint: 'Idagdag ang Stockroom sa home screen: i-tap ang Share, pagkatapos ang “Add to Home Screen”.',
+    themeDarkTitle: 'Lumipat sa dark mode',
+    themeLightTitle: 'Lumipat sa light mode',
+    themeToggleAria: 'I-toggle ang dark mode',
+    statItems: 'Mga item',
+    statUnits: 'Mga unit sa stock',
+    statLowStock: 'Mababang stock',
+    statToReorder: 'Kailangang i-restock',
+    statInventoryValue: 'Halaga ng imbentaryo',
+    statTopSeller: 'Pinakamabenta',
+    xSoldShort: '{n} nabenta',
+    statsAria: 'Buod ng imbentaryo',
+    toolbarAria: 'Mga kontrol ng item',
+    categoryLabel: 'Kategorya',
+    allCategories: 'Lahat ng kategorya',
+    lowStockOnly: 'Mababang stock lang',
+    historyBtn: 'Kasaysayan',
+    historyBtnTitle: 'Tingnan ang kasaysayan ng stock',
+    sellersBtn: 'Pinakamabenta',
+    sellersBtnTitle: 'Tingnan ang mga pinakamabentang item',
+    reorderBtn: 'I-restock',
+    reorderBtnTitle: 'Tingnan kung aling mga item ang kailangang i-restock',
+    reorderBtnTitleN: '{n} item ang kailangang i-restock',
+    exportCsvBtn: 'I-export ang CSV',
+    exportCsvBtnTitle: 'I-download ang mga item bilang CSV',
+    importCsvBtn: 'I-import ang CSV',
+    importCsvBtnTitle: 'I-import ang mga item mula sa CSV file',
+    printLabelsBtn: 'I-print ang mga label',
+    printLabelsBtnTitle: 'I-print ang mga QR label para sa mga napiling item',
+    printLabelsBtnTitleN: '{n} label ang i-print',
+    countSheetBtn: 'Sheet ng pagbilang',
+    countSheetBtnTitle: 'I-print ang sheet ng pagbilang ng stock',
+    countSheetTitle: 'Sheet ng pagbilang ng stock',
+    countSheetItems: 'item',
+    countSheetExpected: 'Inaasahan',
+    countSheetCounted: 'Nabilang',
+    countSheetVariance: 'Pagkakaiba',
+    countSheetTotal: 'Kabuuang inaasahang halaga',
+    countSheetCountedBy: 'Binilang ni',
+    countSheetVerifiedBy: 'Na-verify ni',
+    countSheetDate: 'Petsa',
+    countSheetEmpty: 'Walang bibilangin — walang laman ang kasalukuyang view.',
+    countSheetToast: 'Naipadala sa printer ang sheet ng pagbilang (may {n} item).',
+    clearSelBtn: 'I-clear',
+    clearSelBtnTitle: 'I-clear ang napili',
+    bulkBtn: 'Bulk edit',
+    bulkBtnTitle: 'I-edit ang kategorya, stock, o mga presyo ng mga napiling item',
+    bulkTitleN: { one: 'Bulk edit {n} item', other: 'Bulk edit {n} na item' },
+    bulkCategoryLabel: 'Kategorya',
+    bulkStockLabel: 'Stock',
+    bulkPriceLabel: 'Mga presyo',
+    bulkKeep: 'Panatilihin',
+    bulkStockAdd: 'Dagdagan',
+    bulkStockSub: 'Bawasan',
+    bulkStockSet: 'Itakda sa',
+    bulkPriceSetUnit: 'Itakda ang presyo bawat unit',
+    bulkPriceSetCost: 'Itakda ang presyo ng puhunan',
+    bulkPricePct: 'Baguhin ng %',
+    bulkPricePctHint: 'Nalalapat sa presyo bawat unit at sa puhunan.',
+    bulkPriceReq: 'Maglagay ng numero',
+    bulkStockReq: 'Maglagay ng dami',
+    bulkNoChange: 'Walang babaguhin — pumili ng kategorya, stock, o presyo.',
+    bulkApply: 'Ilapat',
+    bulkToast: 'Na-update ang {n} item.',
+    bulkDetail: 'Bulk edit',
+    bulkSummary: 'Bulk edit: {n} item ang na-update',
+    addItemBtn: 'Magdagdag ng item',
+    chipsAll: 'Lahat',
+    chipsAria: 'I-filter ayon sa kategorya',
+    thItem: 'Item',
+    thCategory: 'Kategorya',
+    thInStock: 'Nasa stock',
+    thUnitPrice: 'Presyo bawat unit',
+    thValue: 'Halaga',
+    thLocation: 'Lokasyon',
+    thUpdated: 'Na-update',
+    thSelect: 'Piliin',
+    selectAllAria: 'Piliin ang lahat ng nakikitang item',
+    actionsAria: 'Mga aksyon',
+    badgeOut: 'Wala nang stock',
+    badgeLow: 'Mababa',
+    badgeScanned: 'Na-scan',
+    decreaseQty: 'Bawasan ang dami',
+    increaseQty: 'Dagdagan ang dami',
+    sellBtnTitle: 'Itala ang benta',
+    outOfStockSell: 'Wala nang stock — mag-restock para makapagbenta',
+    viewQr: 'Tingnan ang QR code',
+    editItemTitle: 'I-edit ang item',
+    deleteItemTitle: 'I-delete ang item',
+    selectItemAria: 'Piliin ang {name}',
+    decQtyAria: 'Bawasan ang dami ng {name}',
+    incQtyAria: 'Dagdagan ang dami ng {name}',
+    sellAria: 'Itala ang benta para sa {name}',
+    qrAria: 'QR code para sa {name}',
+    editAria: 'I-edit ang {name}',
+    deleteAria: 'I-delete ang {name}',
+    emptyNoItems: 'Wala pang mga item',
+    emptyAddFirst: 'Idagdag ang iyong unang item para makapagsimula.',
+    emptyNoMatch: 'Walang tugmang item',
+    emptyTrySearch: 'Subukan ang ibang paghahanap o i-clear ang mga filter.',
+    loadSampleData: 'I-load ang sample data',
+    footnote: 'Nananatili ang data sa device na ito — gumagana ang app nang offline nang walang server. Gamitin ang Export CSV para i-back up o ilipat ito sa ibang lugar.',
+    modalAddTitle: 'Magdagdag ng item',
+    modalEditTitle: 'I-edit ang item',
+    closeAria: 'Isara',
+    fNameLabel: 'Pangalan ng item *',
+    fNamePlaceholder: 'hal. Wireless Mouse',
+    skuLabel: 'SKU',
+    skuPlaceholder: 'hal. ACC-1001',
+    categoryPlaceholder: 'hal. Electronics',
+    quantityLabel: 'Dami *',
+    unitPriceLabel: 'Presyo bawat unit',
+    minStockLabel: 'Min. stock',
+    minStockHint: 'Ang mga dami na katumbas o mas mababa dito ay itinuturing na mababa.',
+    costLabel: 'Presyo ng puhunan',
+    fInvoiceLabel: 'Halaga ng invoice',
+    marginHint: 'Margin: {pct}%',
+    costAbovePrice: 'Mas mataas ang presyo ng puhunan kaysa sa presyo ng benta.',
+    locationLabel: 'Lokasyon',
+    locationPlaceholder: 'hal. A-01',
+    cancelBtn: 'Kanselahin',
+    saveItemBtn: 'I-save ang item',
+    saveChangesBtn: 'I-save ang mga pagbabago',
+    reqFieldsError: 'Paki-kumpletuhin ang mga kinakailangang field.',
+    scanTitle: 'I-scan ang label',
+    closeScannerAria: 'Isara ang scanner',
+    startingCamera: 'Sinisimulan ang camera…',
+    scanDecAria: 'Bawasan ang dami ng na-scan na item',
+    scanIncAria: 'Dagdagan ang dami ng na-scan na item',
+    sellBtn: 'Ibenta',
+    openItemBtn: 'Buksan ang item',
+    scanAnotherBtn: 'I-scan ang isa pa',
+    scanManualPlaceholder: 'o mag-type / mag-paste ng SKU o code',
+    scanLookupBtn: 'Hanapin',
+    scanAddStock: '+ Magdagdag ng stock',
+    scanRemoveStock: '− Mag-alis ng stock',
+    scanAdjustAddTitle: 'Magdagdag sa stock',
+    scanAdjustRemoveTitle: 'Mag-alis sa stock',
+    scanAdjDecAria: 'Bawasan ang dami ng iaadjust',
+    scanAdjIncAria: 'Dagdagan ang dami ng iaadjust',
+    scanAdjustCancel: 'Bumalik',
+    scanAdjustConfirmAdd: 'Kumpirmahin ang pagdagdag',
+    scanAdjustConfirmRemove: 'Kumpirmahin ang pag-alis',
+    scanNewStock: 'Bagong stock: ',
+    scanQtyInvalid: 'Maglagay ng dami na hindi bababa sa 1.',
+    scanRemoveExceeds: '{n} lang ang nasa stock — i-clamp ang aalisin.',
+    scanAddToast: 'Nagdagdag ng {n} sa {name}. Stock: {total}',
+    scanRemoveToast: 'Nag-alis ng {n} sa {name}. Stock: {total}',
+    histViaScan: 'sa pamamagitan ng pag-scan',
+    pointCamera: 'Itutok ang camera sa naka-print na label…',
+    builtinDecoder: 'Built-in decoder — itutok ang camera sa naka-print na label…',
+    cameraDenied: 'Hindi pinayagan ang paggamit ng camera. Payagan ang camera at subukan muli.',
+    cameraCouldNotStart: 'Hindi masimulan ang camera.',
+    cameraUnavailable: 'Hindi available ang camera: {reason}',
+    codeNoMatch: 'Ang code na “{code}” ay walang tugmang item.',
+    sellTitle: 'Itala ang benta',
+    qtySoldLabel: 'Dami ng naibenta',
+    totalLabel: 'Kabuuan: ',
+    recordSaleBtn: 'Itala ang benta',
+    outOfStockSellToast: 'Wala nang stock — walang maibebenta.',
+    cartBtn: 'Cart',
+    cartBtnTitle: 'Buksan ang cart',
+    cartEmpty: 'Walang laman ang cart',
+    cartEmptyHint: 'I-tap ang cart icon sa anumang item row para idagdag.',
+    cartAddToast: 'Naidagdag ang {name} sa cart.',
+    cartRemoveToast: 'Inalis ang {name} sa cart.',
+    cartItemSubtotal: '{qty} × {price}',
+    cartTotal: 'Kabuuan',
+    cartCheckout: 'Bayaran',
+    cartClear: 'I-clear ang cart',
+    cartClearConfirm: 'Alisin ang lahat ng item sa cart?',
+    cartToastN: 'Naibenta ang {n} item para sa {amount}.',
+    cartReceiptTitle: 'Tapos na ang benta',
+    cartReceiptItems: '{n} item',
+    undoBtn: 'I-undo',
+    undoDone: 'Na-undo: {action}.',
+    undoDeleteItem: 'tanggalin ang "{name}"',
+    undoBulkEdit: 'bulk edit ({n} item)',
+    undoSale: 'benta ng {n} item',
+    undoCartCheckout: 'cart checkout ({n} item)',
+    undoClearHistory: 'i-clear ang kasaysayan',
+    cartAddBtn: 'Idagdag sa cart',
+    cartAddBtnTitle: 'Idagdag sa cart',
+    itemGone: 'Wala na ang item na ito.',
+    enterQtySell: 'Maglagay ng dami na ibebenta.',
+    inStockEach: '{n} sa stock · {price} bawat isa',
+    limitedTo: ' (limitado sa {n} ang stock)',
+    skuPrefix: 'SKU: {sku}',
+    soldToast: 'Naibenta ang {n} × {name} — {amount}.',
+    closeSellersAria: 'Isara ang pinakamabenta',
+    periodLabel: 'Panahon',
+    periodAll: 'Lahat ng panahon',
+    period30: 'Huling 30 araw',
+    period7: 'Huling 7 araw',
+    periodToday: 'Ngayon',
+    periodLastN: 'Huling {n} araw',
+    exportCsvTitle: 'I-export ang ranking bilang CSV',
+    exportPngTitle: 'I-export ang ulat bilang PNG na larawan',
+    exportJpegTitle: 'I-export ang ulat bilang JPEG na larawan',
+    exportPdfTitle: 'I-export ang ulat bilang PDF (print)',
+    revenueTrend: 'Trend ng kita',
+    noSalesInPeriod: 'Walang benta sa panahong ito.',
+    unitsSoldWord: 'unit na nabenta',
+    revenueWord: 'na kita',
+    soldWord: 'nabenta',
+    noSalesYet: 'Wala pang naitalang benta. Gamitin ang cart icon sa anumang item row (o ang Sell button pagkatapos mag-scan) para magtala ng isa.',
+    nothingToExport: 'Wala pang maie-export.',
+    sellersExported: 'Na-export ang pinakamabenta.',
+    sellersExportedFmt: 'Na-export ang pinakamabenta bilang {fmt}.',
+    pdfDialogHint: 'Bubuksan ang print dialog — piliin ang “Save as PDF” para sa kopyang PDF.',
+    tabItems: 'Mga Item',
+    tabCategories: 'Mga Kategorya',
+    catRank: 'Ranking ng kategorya',
+    catUnitsSold: '{n} unit na nabenta',
+    catRevenue: '{n} na kita',
+    catItemsInCat: { one: '1 item', other: '{n} item' },
+    catShareOfTotal: '{pct}% ng kabuuan',
+    catChangeUp: '↑ {pct}%',
+    catChangeDown: '↓ {pct}%',
+    catChangeFlat: '—',
+    catPrevLabel: 'vs naunang panahon',
+    catNewCategory: 'bago',
+    catExpandHint: 'I-click para buksan',
+    reportTitle: 'Stockroom — Pinakamabenta',
+    exportedOn: 'Na-export noong {date}',
+    colRank: 'Ranggo',
+    colItem: 'Item',
+    colSku: 'SKU',
+    colUnitsSold: 'Naibentang unit',
+    colRevenue: 'Kita',
+    generatedBy: 'Ginawa ng Stockroom — gumagana nang offline',
+    chartNoSales: 'Walang benta sa panahong ito',
+    revenueTrendAria: 'Tsart ng trend ng kita',
+    restockListTitle: 'Listahan ng restock',
+    closeRestockAria: 'Isara ang listahan ng restock',
+    coverTargetLabel: 'Saklaw ng stock',
+    coverTitle: 'Mga araw ng stock na itatago (lead time + safety buffer)',
+    days14: '14 araw',
+    days30: '30 araw',
+    days60: '60 araw',
+    restockAllBtn: 'I-restock lahat',
+    restockAllTitle: 'I-restock ngayon ang lahat ng iminungkahing item',
+    restockNeed: '{n} item ang kailangang i-restock',
+    restockUnits: '{n} unit ang iminumungkahi',
+    restockBased: 'batay sa huling {days} araw',
+    nothingNeedsReorder: 'Walang kailangang i-restock — maayos ang imbentaryo.',
+    noReorderNow: 'Walang item na kailangang i-restock ngayon. Maayos ang mga antas ng stock.',
+    inStockShort: '{n} sa stock',
+    perDay: '{vel}/araw',
+    daysLeft: '{n} araw na natitira',
+    reorderAt: 'mag-restock kapag {n}',
+    orderN: 'Umorder ng {n}',
+    restockBtn: 'I-restock',
+    restockItemTitle: 'I-restock ang item',
+    qtyReceivedLabel: 'Dami ng natanggap',
+    newStockLabel: 'Bagong stock: ',
+    receiveBtn: 'Tanggapin',
+    enterQtyReceive: 'Maglagay ng dami na tatanggapin.',
+    receivedToast: 'Natanggap ang {n} × {name}.',
+    nothingToRestock: 'Walang i-restock.',
+    restockAllConfirm: 'I-restock lahat ng {n} item gamit ang iminungkahing {qty} unit?',
+    restockDoneToast: 'Natanggap ang mga iminungkahing dami para sa {n} item.',
+    restockTag: 'Restock',
+    codeTitle: 'Code ng item',
+    copySkuBtn: 'Kopyahin ang SKU',
+    printLabelBtn: 'I-print ang label',
+    codeHint: 'I-scan gamit ang anumang camera ng phone o QR reader. Nilalaman ng code ang SKU — i-paste ito sa search box para hanapin o i-adjust ang item na ito.',
+    codeTooLong: 'Masyadong mahaba ang code para ma-encode.',
+    skuCopied: 'Na-kopya ang SKU sa clipboard.',
+    copyFailed: 'Hindi ma-kopya — piliin nang manu-mano ang SKU.',
+    codeSub: '{loc} · Code: {value}',
+    historyTitle: 'Kasaysayan ng stock',
+    closeHistoryAria: 'Isara ang kasaysayan',
+    historyFilterAria: 'I-filter ayon sa uri ng aktibidad',
+    allActivity: 'Lahat ng aktibidad',
+    histAdded: 'Idinagdag',
+    histUpdated: 'Na-update',
+    histQuantity: 'Mga pagbabago sa dami',
+    histDeleted: 'Na-delete',
+    histImports: 'Mga import',
+    histSales: 'Mga benta',
+    historySearchPlaceholder: 'Maghanap ng pangalan ng item o SKU…',
+    clearHistoryBtn: 'I-clear ang kasaysayan',
+    typeAdded: 'Idinagdag',
+    typeUpdated: 'Na-update',
+    typeQuantity: 'Pagbabago ng dami',
+    typeDeleted: 'Na-delete',
+    typeImport: 'Import',
+    typeSold: 'Benta',
+    typeBulk: 'Bulk edit',
+    bulkSelected: { one: '{n} item ang napili', other: '{n} item ang napili' },
+    justNow: 'kakailan lang',
+    mAgo: '{n} min ang nakalipas',
+    hAgo: '{n} oras ang nakalipas',
+    dAgo: '{n} araw ang nakalipas',
+    histAddedWith: 'Idinagdag na may {n} sa stock',
+    histQtyChange: 'Dami {a} → {b}',
+    histDetailsUpdated: 'Na-update ang mga detalye',
+    histRemoved: 'Inalis (may {n} sa stock)',
+    histSoldUnits: 'Naibenta ang {n} unit',
+    histSoldFor: 'Naibenta ang {n} unit sa halagang {amount}',
+    histCsvImport: 'CSV import',
+    histNoActivity: 'Wala pang naitalang aktibidad.',
+    histNoMatch: 'Walang tugmang entry.',
+    histCleared: 'Na-clear ang kasaysayan.',
+    clearHistoryConfirm: 'I-clear ang buong kasaysayan ng stock? Hindi ito maaaring i-undo.',
+    itemUpdated: 'Na-update ang item.',
+    itemAdded: 'Idinagdag ang item.',
+    qtyBelowZero: 'Hindi maaaring bumaba sa zero ang dami.',
+    itemDeleted: 'Na-delete ang item.',
+    deleteConfirm: 'I-delete ang “{name}” mula sa imbentaryo?',
+    exportedItems: 'Na-export ang {n} item sa CSV.',
+    csvNeedsHeader: 'Ang CSV ay nangangailangan ng header row at kahit isang item.',
+    importComplete: 'Kumpleto ang import — {detail}.',
+    addedShort: '{n} idinagdag',
+    updatedShort: '{n} na-update',
+    skippedShort: '{n} nilaktawan',
+    noChanges: 'walang pagbabago',
+    importFailed: 'Nabigo ang import: {msg}',
+    selectAtLeastOne: 'Pumili ng kahit isang item na i-print.',
+    sendingLabels: 'Ipinapadala ang {n} label sa printer.',
+    saveFailed: 'Hindi ma-save: {msg}',
+    darkModeOn: 'Naka-on ang dark mode.',
+    lightModeOn: 'Naka-on ang light mode.',
+    sampleLoaded: 'Na-load ang sample data.',
+    replaceSample: 'Palitan ang mga kasalukuyang item ng sample data?',
+    loadedSampleHistory: 'Na-load ang {n} sample na item',
+    csvName: 'Pangalan',
+    csvSku: 'SKU',
+    csvCategory: 'Kategorya',
+    csvQuantity: 'Dami',
+    csvUnitPrice: 'Presyo bawat Unit',
+    csvCostPrice: 'Presyo ng Puhunan',
+    csvMinStock: 'Min. Stock',
+    csvLocation: 'Lokasyon',
+    settingsTitle: 'Mga setting',
+    languageLabel: 'Wika',
+    langEn: 'English',
+    langTl: 'Tagalog',
+    currencyLabel: 'Pera',
+    currencyUsd: 'Dolyar ng US (USD)',
+    currencyPhp: 'Piso ng Pilipinas (PHP)',
+    rateLabel: 'Palitan ng pera (₱ bawat $)',
+    rateHint: 'Ginagamit ito para i-convert ang mga invoice ng supplier sa pagitan ng USD at PHP.',
+    doneBtn: 'Tapos',
+    settingsSaved: 'Na-save ang mga setting.',
+    categoriesSection: 'Mga Kategorya',
+    categoriesHint: 'Pamahalaan ang mga kategoryang ginagamit sa pag-oorganisa ng mga item.',
+    categoryAddPlaceholder: 'Pangalan ng bagong kategorya',
+    categoryAddBtn: 'Idagdag',
+    categoriesEmpty: 'Wala pang kategorya — magdagdag sa itaas, o mag-type sa form ng item.',
+    categoryItemCount: { one: '1 item', other: '{n} item' },
+    categoryEdit: 'Palitan ang pangalan',
+    categoryDelete: 'I-delete',
+    categoryEditAria: 'Palitan ang pangalan ng {name}',
+    categoryDeleteAria: 'I-delete ang {name}',
+    categoryNameEmpty: 'Maglagay ng pangalan ng kategorya.',
+    categoryDuplicate: 'Mayroon nang kategoryang may ganyang pangalan.',
+    categoryAddedToast: 'Naidagdag ang kategoryang “{name}”.',
+    categoryRenamedToast: 'Pinalitan ang pangalan ng kategorya sa “{name}”.',
+    categoryDeletedToast: 'Na-delete ang kategoryang “{name}”.',
+    categoryDeleteConfirm: 'I-delete ang kategoryang “{name}” at alisin ito sa {n} item?',
+  },
+};
+
+let settings = loadSettings();
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    const p = raw ? JSON.parse(raw) : {};
+    return {
+      lang: p.lang === 'tl' ? 'tl' : 'en',
+      currency: p.currency === 'PHP' ? 'PHP' : 'USD',
+      rate: Number(p.rate) > 0 ? Number(p.rate) : DEFAULT_RATE,
+      categories: Array.isArray(p.categories)
+        ? p.categories.filter((c) => typeof c === 'string' && c.trim())
+        : [],
+    };
+  } catch (e) {
+    return { lang: 'en', currency: 'USD', rate: DEFAULT_RATE, categories: [] };
+  }
+}
+
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch (e) { /* best-effort */ }
+}
+
+const uiLocale = () => (settings.lang === 'tl' ? 'fil-PH' : 'en-US');
+
+// Translate a key for the active language. Pass { n } for plural-aware keys
+// (dictionary value may be { one, other }).
+function t(key, vars) {
+  const dict = I18N[settings.lang] || I18N.en;
+  let entry = dict[key] != null ? dict[key] : (I18N.en[key] != null ? I18N.en[key] : key);
+  if (typeof entry === 'object') {
+    const n = Number(vars && vars.n);
+    entry = entry[n === 1 ? 'one' : 'other'];
+    if (entry == null) entry = key;
+  }
+  if (entry != null && vars) {
+    for (const k of Object.keys(vars)) entry = String(entry).split('{' + k + '}').join(String(vars[k]));
+  }
+  return entry == null ? key : String(entry);
+}
+
+function currencySymbol(cur) {
+  const c = cur || settings.currency;
+  try {
+    const parts = new Intl.NumberFormat(uiLocale(), {
+      style: 'currency',
+      currency: c,
+      currencyDisplay: 'narrowSymbol',
+    }).formatToParts(0);
+    const sym = parts.find((p) => p.type === 'currency');
+    return sym ? sym.value : (c === 'PHP' ? '₱' : '$');
+  } catch (e) {
+    return c === 'PHP' ? '₱' : '$';
+  }
+}
+
+// The currency a supplier invoice is typically quoted in (the opposite of the
+// app's display currency).
+const otherCurrencyCode = () => (settings.currency === 'PHP' ? 'USD' : 'PHP');
+
+// Translate every static element carrying data-i18n / data-i18n-ph /
+// data-i18n-title / data-i18n-aria attributes.
+function applyStaticI18n() {
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-ph]').forEach((el) => { el.placeholder = t(el.dataset.i18nPh); });
+  document.querySelectorAll('[data-i18n-title]').forEach((el) => { el.title = t(el.dataset.i18nTitle); });
+  document.querySelectorAll('[data-i18n-aria]').forEach((el) => { el.setAttribute('aria-label', t(el.dataset.i18nAria)); });
+}
+
+// Re-apply language, currency, and every dynamic surface after a settings change.
+function applyUi() {
+  document.documentElement.lang = settings.lang;
+  document.title = t('appTitle');
+  applyStaticI18n();
+  const up = $('#fUnitPriceLabel');
+  if (up) up.textContent = t('unitPriceLabel') + ' (' + currencySymbol() + ')';
+  const cl = $('#fCostLabel');
+  if (cl) cl.textContent = t('costLabel') + ' (' + currencySymbol() + ')';
+  const il = $('#fInvoiceLabel');
+  if (il) il.textContent = t('fInvoiceLabel') + ' (' + currencySymbol(otherCurrencyCode()) + ')';
+  if (!$('#modalBackdrop').hidden) updateMarginHint();
+  applyTheme(currentTheme());
+  render();
+  if (!$('#settingsBackdrop').hidden) renderCategoryManager();
+  if (!$('#sellersBackdrop').hidden) {
+    renderSellers();
+    if (sellersTab === 'items') drawTrendChart(sellersPeriod);
+  }
+}
+
+function openSettings() {
+  $('#settingsLang').value = settings.lang;
+  $('#settingsCurrency').value = settings.currency;
+  $('#settingsRate').value = settings.rate;
+  editingCategory = null;
+  renderCategoryManager();
+  $('#settingsBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeSettings() {
+  $('#settingsBackdrop').hidden = true;
+  document.body.style.overflow = '';
+}
+
+function changeSettings(next) {
+  settings = { ...settings, ...next };
+  saveSettings();
+  applyUi();
+  toast(t('settingsSaved'));
+}
+
+/* ---------- Theme ---------- */
+
+const THEME_KEY = 'freebuff.inventory.theme.v1';
+
+function currentTheme() {
+  return document.documentElement.dataset.theme || 'light';
+}
+
+function systemPrefersDark() {
+  return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const btn = $('#themeBtn');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(theme === 'dark'));
+    btn.title = theme === 'dark' ? t('themeLightTitle') : t('themeDarkTitle');
+  }
+  drawTrendChart(sellersPeriod); // recolor the on-screen chart for the new theme
+}
+
+function toggleTheme() {
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch (e) { /* best-effort */ }
+  applyTheme(next);
+  toast(next === 'dark' ? t('darkModeOn') : t('lightModeOn'));
+}
+
+/* ---------- Persistence ---------- */
+
+function loadItems() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((it) => it && typeof it.name === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function saveItems() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  } catch (err) {
+    toast(t('saveFailed', { msg: err.message }), 'error');
+  }
+}
+
+/* ---------- Stock history persistence ---------- */
+
+const HISTORY_KEY = 'freebuff.inventory.history.v1';
+const HISTORY_LIMIT = 500;
+
+let history = loadHistory();
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch {
+    /* history is best-effort; never block the app on it */
+  }
+}
+
+function recordHistory(entry) {
+  history.push({
+    id: uid('h-'),
+    ts: new Date().toISOString(),
+    type: entry.type,
+    itemId: entry.itemId || null,
+    itemName: entry.itemName || '',
+    sku: entry.sku || '',
+    delta: entry.delta ?? null,
+    qtyBefore: entry.qtyBefore ?? null,
+    qtyAfter: entry.qtyAfter ?? null,
+    detail: entry.detail || '',
+    revenue: entry.revenue ?? null,
+  });
+  if (history.length > HISTORY_LIMIT) history = history.slice(-HISTORY_LIMIT);
+  saveHistory();
+}
+
+/* ---------- Sales persistence ---------- */
+
+const SALES_KEY = 'freebuff.inventory.sales.v1';
+const SALES_LIMIT = 5000;
+
+let sales = loadSales();
+
+function loadSales() {
+  try {
+    const raw = localStorage.getItem(SALES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSales() {
+  try {
+    localStorage.setItem(SALES_KEY, JSON.stringify(sales));
+  } catch {
+    /* sales are best-effort; never block the app on them */
+  }
+}
+
+function recordSale(item, qty) {
+  const price = Number(item.unitPrice) || 0;
+  const revenue = qty * price;
+  sales.push({
+    id: uid('s-'),
+    itemId: item.id,
+    sku: item.sku || '',
+    name: item.name,
+    qty,
+    unitPrice: price,
+    revenue,
+    ts: new Date().toISOString(),
+  });
+  if (sales.length > SALES_LIMIT) sales = sales.slice(-SALES_LIMIT);
+  saveSales();
+  return revenue;
+}
+
+/* ---------- Cart (POS) ---------- */
+
+/* ---------- Undo system ---------- */
+
+const undoStack = [];
+const UNDO_LIMIT = 10;
+let undoTimer = null;
+
+function pushUndo(entry) {
+  // entry: { type, label, inverse: function }
+  undoStack.push({ ...entry, id: uid('undo'), ts: Date.now() });
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+}
+
+function performUndo() {
+  if (undoStack.length === 0) return;
+  const entry = undoStack.pop();
+  if (entry.inverse) entry.inverse();
+  render();
+  toast(t('undoDone', { action: entry.label }));
+}
+
+function toastWithUndo(message, type, undoEntry) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type || 'success');
+
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'toast-msg';
+  msgSpan.textContent = message;
+  el.appendChild(msgSpan);
+
+  if (undoEntry) {
+    pushUndo(undoEntry);
+    const undoBtn = document.createElement('button');
+    undoBtn.className = 'toast-undo-btn';
+    undoBtn.textContent = t('undoBtn');
+    undoBtn.addEventListener('click', () => {
+      // Remove this specific undo entry and perform it
+      const idx = undoStack.findIndex((u) => u.id === undoEntry.id);
+      if (idx >= 0) {
+        const entry = undoStack.splice(idx, 1)[0];
+        if (entry.inverse) entry.inverse();
+        render();
+        toast(t('undoDone', { action: entry.label }));
+      }
+      el.remove();
+    });
+    el.appendChild(undoBtn);
+  }
+
+  $('#toasts').appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transition = 'opacity 0.25s';
+    setTimeout(() => el.remove(), 250);
+  }, undoEntry ? 8000 : 2600); // Longer timeout for undoable toasts
+}
+
+let cart = []; // Array of { itemId, name, sku, unitPrice, qty }
+
+function cartAddItem(itemId) {
+  const item = items.find((it) => it.id === itemId);
+  if (!item) return;
+  const available = Number(item.quantity) || 0;
+  if (available <= 0) { toast(t('outOfStockSellToast'), 'error'); return; }
+  const existing = cart.find((c) => c.itemId === itemId);
+  if (existing) {
+    if (existing.qty >= available) { toast(t('outOfStockSellToast'), 'error'); return; }
+    existing.qty++;
+  } else {
+    cart.push({ itemId: item.id, name: item.name, sku: item.sku || '', unitPrice: Number(item.unitPrice) || 0, qty: 1 });
+  }
+  renderCart();
+  toast(t('cartAddToast', { name: item.name }));
+}
+
+function cartRemoveItem(itemId) {
+  const idx = cart.findIndex((c) => c.itemId === itemId);
+  if (idx >= 0) {
+    const name = cart[idx].name;
+    cart.splice(idx, 1);
+    renderCart();
+    toast(t('cartRemoveToast', { name }));
+  }
+}
+
+function cartUpdateQty(itemId, qty) {
+  const entry = cart.find((c) => c.itemId === itemId);
+  if (!entry) return;
+  const item = items.find((it) => it.id === itemId);
+  const available = item ? Number(item.quantity) || 0 : 0;
+  entry.qty = Math.max(1, Math.min(qty, available));
+  renderCart();
+}
+
+function cartTotal() {
+  return cart.reduce((sum, c) => sum + c.qty * c.unitPrice, 0);
+}
+
+function cartItemCount() {
+  return cart.reduce((sum, c) => sum + c.qty, 0);
+}
+
+function openCart() {
+  $('#cartBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+  renderCart();
+}
+
+function closeCart() {
+  $('#cartBackdrop').hidden = true;
+  document.body.style.overflow = '';
+}
+
+function renderCart() {
+  // Update badge
+  const badge = $('#cartBadge');
+  const count = cartItemCount();
+  if (badge) {
+    badge.textContent = count;
+    badge.hidden = count === 0;
+  }
+
+  const listEl = $('#cartList');
+  const totalEl = $('#cartTotal');
+  const checkoutBtn = $('#cartCheckoutBtn');
+  if (!listEl) return;
+
+  if (cart.length === 0) {
+    listEl.innerHTML = `<div class="cart-empty"><div class="cart-empty-icon">🛒</div><div>${escapeHtml(t('cartEmpty'))}</div><div class="cart-empty-hint">${escapeHtml(t('cartEmptyHint'))}</div></div>`;
+    if (totalEl) totalEl.textContent = fmtCurrency(0);
+    if (checkoutBtn) checkoutBtn.disabled = true;
+    return;
+  }
+
+  if (checkoutBtn) checkoutBtn.disabled = false;
+
+  listEl.innerHTML = cart.map((c) => {
+    const item = items.find((it) => it.id === c.itemId);
+    const available = item ? Number(item.quantity) || 0 : 0;
+    const maxQty = available;
+    const atMax = c.qty >= maxQty;
+    return `<div class="cart-item" data-item-id="${c.itemId}">
+      <div class="cart-item-info">
+        <div class="cart-item-name">${escapeHtml(c.name)}</div>
+        <div class="cart-item-sku">${escapeHtml(c.sku)} · ${fmtCurrency(c.unitPrice)} each</div>
+      </div>
+      <div class="cart-item-controls">
+        <button class="cart-qty-btn" data-action="cart-dec" data-item-id="${c.itemId}" aria-label="Decrease">−</button>
+        <span class="cart-item-qty">${c.qty}</span>
+        <button class="cart-qty-btn" data-action="cart-inc" data-item-id="${c.itemId}" ${atMax ? 'disabled' : ''} aria-label="Increase">+</button>
+        <span class="cart-item-subtotal">${fmtCurrency(c.qty * c.unitPrice)}</span>
+        <button class="cart-item-remove" data-action="cart-remove" data-item-id="${c.itemId}" aria-label="Remove">×</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  if (totalEl) totalEl.textContent = fmtCurrency(cartTotal());
+}
+
+function checkoutCart() {
+  if (cart.length === 0) return;
+  let totalRevenue = 0;
+  let totalItems = 0;
+  const soldItems = [];
+
+  // Snapshot for undo
+  const cartSnapshot = cart.map((c) => ({ ...c }));
+  const itemSnapshots = [];
+  const saleSnapshots = [];
+
+  for (const entry of cart) {
+    const item = items.find((it) => it.id === entry.itemId);
+    if (!item) continue;
+    const available = Number(item.quantity) || 0;
+    const sold = Math.min(entry.qty, available);
+    if (sold <= 0) continue;
+
+    itemSnapshots.push({ id: item.id, quantity: item.quantity, updatedAt: item.updatedAt });
+    const before = available;
+    item.quantity = before - sold;
+    item.updatedAt = new Date().toISOString();
+    const revenue = recordSale(item, sold);
+    totalRevenue += revenue;
+    totalItems += sold;
+    soldItems.push({ name: item.name, qty: sold, revenue });
+    // Track the sale record for undo
+    saleSnapshots.push(sales[sales.length - 1]);
+
+    recordHistory({
+      type: 'sold',
+      itemId: item.id,
+      itemName: item.name,
+      sku: item.sku || '',
+      delta: -sold,
+      qtyBefore: before,
+      qtyAfter: item.quantity,
+      revenue,
+      detail: t('histSoldFor', { n: sold, amount: fmtCurrency(revenue) }),
+    });
+  }
+
+  saveItems();
+  cart = [];
+  renderCart();
+  closeCart();
+  render();
+  toastWithUndo(t('cartToastN', { n: totalItems, amount: fmtCurrency(totalRevenue) }), 'success', {
+    type: 'cartCheckout',
+    label: t('undoCartCheckout', { n: totalItems }),
+    inverse: () => {
+      // Restore stock
+      for (const snap of itemSnapshots) {
+        const it = items.find((i) => i.id === snap.id);
+        if (it) { it.quantity = snap.quantity; it.updatedAt = snap.updatedAt; }
+      }
+      // Remove sale records
+      for (const sale of saleSnapshots) {
+        const idx = sales.findIndex((s) => s.id === sale.id);
+        if (idx >= 0) sales.splice(idx, 1);
+      }
+      // Restore cart
+      cart = cartSnapshot;
+      saveItems();
+      saveSales();
+      renderCart();
+    },
+  });
+}
+
+/* ---------- Rendering ---------- */
+
+function getFiltered() {
+  const q = state.search.trim().toLowerCase();
+  let list = items.filter((it) => {
+    if (state.category !== 'all' && it.category !== state.category) return false;
+    if (state.lowStockOnly && !isLowStock(it)) return false;
+    if (q) {
+      const hay = (it.name + ' ' + (it.sku || '') + ' ' + (it.category || '')).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const dir = state.sortDir === 'asc' ? 1 : -1;
+  const key = state.sortKey;
+  list.sort((a, b) => {
+    let va = a[key];
+    let vb = b[key];
+    if (typeof va === 'string') {
+      va = va.toLowerCase();
+      vb = String(vb ?? '').toLowerCase();
+      return va.localeCompare(vb) * dir;
+    }
+    return ((Number(va) || 0) - (Number(vb) || 0)) * dir;
+  });
+  return list;
+}
+
+function renderStats(list) {
+  const totalValue = list.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.unitPrice) || 0), 0);
+  const lowCount = list.filter(isLowStock).length;
+  const totalUnits = list.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+
+  const top = getSellers('all')[0];
+  const toReorder = getReorderList().length;
+  const cards = [
+    { label: t('statItems'), value: list.length.toLocaleString(), cls: '' },
+    { label: t('statUnits'), value: totalUnits.toLocaleString(), cls: '' },
+    { label: t('statLowStock'), value: lowCount.toLocaleString(), cls: lowCount > 0 ? 'low' : '' },
+    {
+      label: t('statToReorder'),
+      value: toReorder.toLocaleString(),
+      cls: 'clickable' + (toReorder > 0 ? ' low' : ''),
+      target: 'reorder',
+    },
+    { label: t('statInventoryValue'), value: fmtCurrency(totalValue), cls: '' },
+    {
+      label: t('statTopSeller'),
+      value: top ? `${top.name} · ${t('xSoldShort', { n: top.qty.toLocaleString() })}` : '—',
+      cls: 'clickable',
+      target: 'sellers',
+    },
+  ];
+
+  $('#stats').innerHTML = cards.map((c) => `
+    <div class="stat-card ${c.cls}"${c.target ? ` data-target="${c.target}"` : ''}>
+      <div class="stat-label">${c.label}</div>
+      <div class="stat-value">${escapeHtml(c.value)}</div>
+    </div>
+  `).join('');
+}
+
+/* ---------- Category management ---------- */
+
+// The full category list: managed categories (Settings) + any category still
+// found on items (e.g. typed straight into the item form). Case-insensitive union.
+function getAllCategories() {
+  const managed = (settings.categories || []).map((c) => String(c).trim()).filter(Boolean);
+  const derived = items.map((it) => it.category).filter(Boolean);
+  const seen = new Set();
+  const out = [];
+  for (const c of [...managed, ...derived]) {
+    const key = c.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(c);
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function categoryCount(name) {
+  const key = name.toLowerCase();
+  return items.filter((it) => (it.category || '').toLowerCase() === key).length;
+}
+
+// Register a category in the managed list (used by the item form).
+function registerCategory(name) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return;
+  const exists = (settings.categories || []).some((c) => c.toLowerCase() === trimmed.toLowerCase());
+  if (!exists) {
+    settings.categories = [...(settings.categories || []), trimmed];
+    saveSettings();
+  }
+}
+
+let editingCategory = null; // category name currently being renamed in Settings
+
+function renderCategoryManager() {
+  const list = $('#settingsCategoryList');
+  if (!list) return;
+  const cats = getAllCategories();
+  if (cats.length === 0) {
+    list.innerHTML = `<div class="category-empty">${escapeHtml(t('categoriesEmpty'))}</div>`;
+    return;
+  }
+  const editBtn = (c) =>
+    `<button type="button" class="icon-btn" data-act="edit" data-cat="${escapeHtml(c)}" aria-label="${escapeHtml(t('categoryEditAria', { name: c }))}" title="${escapeHtml(t('categoryEdit'))}">` +
+    `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>`;
+  const delBtn = (c) =>
+    `<button type="button" class="icon-btn danger" data-act="delete" data-cat="${escapeHtml(c)}" aria-label="${escapeHtml(t('categoryDeleteAria', { name: c }))}" title="${escapeHtml(t('categoryDelete'))}">` +
+    `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>`;
+  list.innerHTML = cats
+    .map((c) => {
+      if (editingCategory === c) {
+        return `
+        <div class="category-row">
+          <input type="text" class="category-edit-input" id="categoryEditInput" value="${escapeHtml(c)}" maxlength="60" autocomplete="off" />
+          <div class="category-row-actions">
+            <button type="button" class="btn btn-primary" id="categoryEditSave" data-i18n="saveBtn">Save</button>
+            <button type="button" class="btn btn-ghost" id="categoryEditCancel" data-i18n="cancelBtn">Cancel</button>
+          </div>
+        </div>`;
+      }
+      return `
+        <div class="category-row">
+          <span class="category-row-name">${escapeHtml(c)}</span>
+          <span class="category-row-count">${escapeHtml(t('categoryItemCount', { n: categoryCount(c) }))}</span>
+          <div class="category-row-actions">${editBtn(c)}${delBtn(c)}</div>
+        </div>`;
+    })
+    .join('');
+}
+
+function addCategory() {
+  const input = $('#categoryNewName');
+  const name = input.value.trim();
+  if (!name) {
+    toast(t('categoryNameEmpty'), 'error');
+    return;
+  }
+  if (getAllCategories().some((c) => c.toLowerCase() === name.toLowerCase())) {
+    toast(t('categoryDuplicate'), 'error');
+    return;
+  }
+  settings.categories = [...(settings.categories || []), name];
+  saveSettings();
+  input.value = '';
+  editingCategory = null;
+  renderCategoryManager();
+  renderCategoryOptions();
+  toast(t('categoryAddedToast', { name }));
+}
+
+function renameCategory(oldName, newName) {
+  const name = newName.trim();
+  if (!name) {
+    toast(t('categoryNameEmpty'), 'error');
+    return;
+  }
+  if (oldName.toLowerCase() === name.toLowerCase()) {
+    editingCategory = null;
+    renderCategoryManager();
+    return;
+  }
+  if (getAllCategories().some((c) => c.toLowerCase() === name.toLowerCase() && c !== oldName)) {
+    toast(t('categoryDuplicate'), 'error');
+    return;
+  }
+  settings.categories = (settings.categories || []).map((c) => (c === oldName ? name : c));
+  let changed = false;
+  items.forEach((it) => {
+    if (it.category === oldName) {
+      it.category = name;
+      changed = true;
+    }
+  });
+  if (changed) saveItems();
+  saveSettings();
+  if (state.category === oldName) state.category = name;
+  editingCategory = null;
+  renderCategoryManager();
+  renderCategoryOptions();
+  render();
+  toast(t('categoryRenamedToast', { name }));
+}
+
+function deleteCategory(name) {
+  const count = categoryCount(name);
+  if (!window.confirm(t('categoryDeleteConfirm', { name, n: count }))) return;
+  settings.categories = (settings.categories || []).filter((c) => c !== name);
+  let changed = false;
+  items.forEach((it) => {
+    if (it.category === name) {
+      it.category = '';
+      changed = true;
+    }
+  });
+  if (changed) saveItems();
+  saveSettings();
+  if (state.category === name) state.category = 'all';
+  editingCategory = null;
+  renderCategoryManager();
+  renderCategoryOptions();
+  render();
+  toast(t('categoryDeletedToast', { name }));
+}
+
+function renderCategoryOptions() {
+  const cats = getAllCategories();
+  const current = state.category;
+  if (current !== 'all' && !cats.includes(current)) state.category = 'all';
+
+  $('#categoryFilter').innerHTML =
+    `<option value="all">${escapeHtml(t('allCategories'))}</option>` +
+    cats.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+
+  $('#categoryList').innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('');
+  $('#categoryFilter').value = state.category;
+
+  const chips = $('#categoryChips');
+  if (chips) {
+    const chip = (label, value) =>
+      `<button class="chip${state.category === value ? ' active' : ''}" data-cat="${escapeHtml(value)}">${escapeHtml(label)}</button>`;
+    chips.innerHTML = chip(t('chipsAll'), 'all') + cats.map((c) => chip(c, c)).join('');
+  }
+}
+
+function renderSortIndicators() {
+  document.querySelectorAll('th.sortable').forEach((th) => {
+    th.classList.remove('sorted-asc', 'sorted-desc');
+    if (th.dataset.sort === state.sortKey) th.classList.add(state.sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+  });
+}
+
+function renderRows(list) {
+  const body = $('#itemsBody');
+
+  if (list.length === 0) {
+    body.innerHTML = '';
+    showEmptyState(list.length === 0 && items.length === 0);
+    return;
+  }
+
+  showEmptyState(false);
+
+  const scannedQuery = state.search.trim().toLowerCase();
+
+  body.innerHTML = list.map((it) => {
+    const qty = Number(it.quantity) || 0;
+    const price = Number(it.unitPrice) || 0;
+    const value = qty * price;
+    const low = isLowStock(it);
+    const isScanMatch = Boolean(it.sku) && it.sku.toLowerCase() === scannedQuery && scannedQuery !== '';
+
+    let badge = '';
+    if (low) {
+      const cls = qty === 0 ? 'out' : 'warn';
+      const label = qty === 0 ? t('badgeOut') : t('badgeLow');
+      badge = `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
+    }
+    const escName = escapeHtml(it.name);
+
+    return `
+      <tr data-id="${it.id}" class="${isScanMatch ? 'scanned-row' : ''}">
+        <td class="sel-col">
+          <input type="checkbox" class="row-select" data-id="${it.id}" aria-label="${escapeHtml(t('selectItemAria', { name: it.name }))}" ${selectedIds.has(it.id) ? 'checked' : ''} />
+        </td>
+        <td class="name-cell">
+          <span class="item-name">${escName}</span>
+          ${it.sku ? `<span class="item-sku">${escapeHtml(it.sku)}</span>` : ''}
+          ${isScanMatch ? `<span class="badge scan">${escapeHtml(t('badgeScanned'))}</span>` : ''}
+        </td>
+        <td data-label="${escapeHtml(t('thCategory'))}">${it.category ? `<span class="cat-pill">${escapeHtml(it.category)}</span>` : '<span class="muted">—</span>'}</td>
+        <td class="num" data-label="${escapeHtml(t('thInStock'))}">
+          <span class="qty-cell">
+            <button class="qty-step" data-action="dec" data-id="${it.id}" title="${escapeHtml(t('decreaseQty'))}" aria-label="${escapeHtml(t('decQtyAria', { name: it.name }))}">−</button>
+            <span class="qty-value">${qty.toLocaleString()}</span>
+            <button class="qty-step" data-action="inc" data-id="${it.id}" title="${escapeHtml(t('increaseQty'))}" aria-label="${escapeHtml(t('incQtyAria', { name: it.name }))}">+</button>
+            ${badge}
+          </span>
+        </td>
+        <td class="num" data-label="${escapeHtml(t('thUnitPrice'))}">${fmtCurrency(price)}</td>
+        <td class="num" data-label="${escapeHtml(t('thValue'))}">${fmtCurrency(value)}</td>
+        <td data-label="${escapeHtml(t('thLocation'))}">${it.location ? escapeHtml(it.location) : '<span class="muted">—</span>'}</td>
+        <td class="muted updated-col" data-label="${escapeHtml(t('thUpdated'))}">${fmtDate(it.updatedAt)}</td>
+        <td class="actions-cell">
+          <div class="row-actions">
+            <button class="icon-btn" data-action="sell" data-id="${it.id}" title="${escapeHtml(qty > 0 ? t('sellBtnTitle') : t('outOfStockSell'))}" aria-label="${escapeHtml(t('sellAria', { name: it.name }))}" ${qty <= 0 ? 'disabled' : ''}>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="8" cy="21" r="1" /><circle cx="19" cy="21" r="1" />
+                <path d="M2.05 2.05h2l2.66 12.42a2 2 0 002 1.58h9.78a2 2 0 001.95-1.57l1.65-7.43H5.12" />
+              </svg>
+            </button>
+            <button class="icon-btn" data-action="add-to-cart" data-id="${it.id}" title="${escapeHtml(t('cartAddBtnTitle'))}" aria-label="${escapeHtml(t('cartAddBtnTitle'))}" ${qty <= 0 ? 'disabled' : ''}>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+                <path d="M1 1h4l2.68 13.39a1 1 0 001 .81h9.72a1 1 0 00.98-.78L23 6H6" />
+                <line x1="12" y1="9" x2="12" y2="15" /><line x1="9" y1="12" x2="15" y2="12" />
+              </svg>
+            </button>
+            <button class="icon-btn" data-action="code" data-id="${it.id}" title="${escapeHtml(t('viewQr'))}" aria-label="${escapeHtml(t('qrAria', { name: it.name }))}">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+                <path d="M14 14h3v3h-3zM21 14v7M14 21h7" />
+              </svg>
+            </button>
+            <button class="icon-btn" data-action="edit" data-id="${it.id}" title="${escapeHtml(t('editItemTitle'))}" aria-label="${escapeHtml(t('editAria', { name: it.name }))}">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+              </svg>
+            </button>
+            <button class="icon-btn danger" data-action="delete" data-id="${it.id}" title="${escapeHtml(t('deleteItemTitle'))}" aria-label="${escapeHtml(t('deleteAria', { name: it.name }))}">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18" /><path d="M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2" />
+                <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6M14 11v6" />
+              </svg>
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function showEmptyState(noItemsAtAll) {
+  const box = $('#emptyState');
+  const table = $('.table-scroll');
+  box.hidden = false;
+  table.style.display = 'none';
+  $('#emptyTitle').textContent = noItemsAtAll ? t('emptyNoItems') : t('emptyNoMatch');
+  $('#emptyText').textContent = noItemsAtAll
+    ? t('emptyAddFirst')
+    : t('emptyTrySearch');
+  $('#emptyAddBtn').style.display = noItemsAtAll ? '' : 'none';
+  $('#emptySeedBtn').style.display = noItemsAtAll ? '' : 'none';
+}
+
+function render() {
+  renderCategoryOptions();
+  renderSortIndicators();
+  const list = getFiltered();
+  renderStats(list);
+  renderRows(list);
+  updateReorderControls();
+  const table = $('.table-scroll');
+  const box = $('#emptyState');
+  if (list.length > 0) {
+    table.style.display = '';
+    box.hidden = true;
+  }
+  syncSelectAll();
+  updatePrintControls();
+  // Update cart badge
+  const badge = $('#cartBadge');
+  if (badge) {
+    const count = cartItemCount();
+    badge.textContent = count;
+    badge.hidden = count === 0;
+  }
+}
+
+/* ---------- Label selection (batch printing) ---------- */
+
+const selectedIds = new Set();
+
+function syncSelectAll() {
+  const cb = $('#selectAll');
+  if (!cb) return;
+  const visible = getFiltered().map((it) => it.id);
+  const sel = visible.filter((id) => selectedIds.has(id)).length;
+  cb.checked = visible.length > 0 && sel === visible.length;
+  cb.indeterminate = sel > 0 && sel < visible.length;
+}
+
+function updatePrintControls() {
+  const n = selectedIds.size;
+  $('#printLabelsBtn').disabled = n === 0;
+  $('#printLabelsBtn').title = n > 0
+    ? t('printLabelsBtnTitleN', { n })
+    : t('printLabelsBtnTitle');
+  $('#bulkEditBtn').disabled = n === 0;
+  $('#bulkEditBtn').title = n > 0
+    ? t('bulkBtnTitle')
+    : t('bulkBtnTitle');
+  const count = $('#printCount');
+  count.hidden = n === 0;
+  count.textContent = n;
+  $('#clearSelBtn').hidden = n === 0;
+}
+
+function toggleSelect(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  render();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  render();
+}
+
+/* ---------- Bulk edit ---------- */
+
+function openBulkEdit() {
+  if (selectedIds.size === 0) return;
+  $('#bulkTitle').textContent = t('bulkTitleN', { n: selectedIds.size });
+  $('#bulkCount').textContent = t('bulkSelected', { n: selectedIds.size });
+  const sel = $('#bulkCategory');
+  sel.innerHTML =
+    '<option value="">—</option>' +
+    getAllCategories().map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  sel.value = '';
+  $('#bulkStockMode').value = 'keep';
+  $('#bulkPriceMode').value = 'keep';
+  updateBulkUi();
+  $('#bulkBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeBulkEdit() {
+  $('#bulkBackdrop').hidden = true;
+  document.body.style.overflow = '';
+}
+
+function updateBulkUi() {
+  const stockMode = $('#bulkStockMode').value;
+  const priceMode = $('#bulkPriceMode').value;
+  const stockQty = $('#bulkStockQty');
+  stockQty.disabled = stockMode === 'keep';
+  if (stockMode === 'keep') stockQty.value = '';
+  const priceQty = $('#bulkPriceQty');
+  priceQty.disabled = priceMode === 'keep';
+  priceQty.placeholder = priceMode === 'pct' ? '0' : '0.00';
+  if (priceMode === 'keep') priceQty.value = '';
+  const hint = $('#bulkPriceHint');
+  hint.hidden = priceMode !== 'pct';
+  hint.textContent = priceMode === 'pct' ? t('bulkPricePctHint') : '';
+}
+
+function applyBulkEdit() {
+  const ids = [...selectedIds];
+  if (ids.length === 0) return;
+  const cat = $('#bulkCategory').value;
+  const stockMode = $('#bulkStockMode').value;
+  const priceMode = $('#bulkPriceMode').value;
+
+  const stockQty = Math.floor(Number($('#bulkStockQty').value));
+  const priceQty = Number($('#bulkPriceQty').value);
+  const needStock = stockMode !== 'keep' && ($('#bulkStockQty').value === '' || !Number.isFinite(stockQty) || stockQty < 0);
+  const needPrice = priceMode !== 'keep' && ($('#bulkPriceQty').value === '' || !Number.isFinite(priceQty));
+  if (needStock) { toast(t('bulkStockReq'), 'error'); return; }
+  if (needPrice) { toast(t('bulkPriceReq'), 'error'); return; }
+  if (!cat && stockMode === 'keep' && priceMode === 'keep') { toast(t('bulkNoChange'), 'error'); return; }
+
+  // Snapshot for undo
+  const targets = items.filter((it) => ids.includes(it.id));
+  const snapshots = targets.map((it) => ({ ...it }));
+  const detail = t('bulkDetail');
+  const now = new Date().toISOString();
+  let changed = 0;
+
+  targets.forEach((it) => {
+    let touched = false;
+    if (cat && it.category !== cat) { it.category = cat; touched = true; }
+    if (priceMode === 'setUnit') {
+      const v = Math.max(0, Math.round(priceQty * 100) / 100);
+      if (it.unitPrice !== v) { it.unitPrice = v; touched = true; }
+    } else if (priceMode === 'setCost') {
+      const v = Math.max(0, Math.round(priceQty * 100) / 100);
+      if (it.costPrice !== v) { it.costPrice = v; touched = true; }
+    } else if (priceMode === 'pct' && priceQty !== 0) {
+      const f = 1 + priceQty / 100;
+      it.unitPrice = Math.max(0, Math.round((it.unitPrice || 0) * f * 100) / 100);
+      it.costPrice = Math.max(0, Math.round((it.costPrice || 0) * f * 100) / 100);
+      touched = true;
+    }
+    if (stockMode !== 'keep') {
+      const before = Number(it.quantity) || 0;
+      let next;
+      if (stockMode === 'add') next = before + stockQty;
+      else if (stockMode === 'sub') next = Math.max(0, before - stockQty);
+      else next = stockQty;
+      if (next !== before) {
+        it.quantity = next;
+        it.updatedAt = now;
+        recordHistory({
+          type: 'quantity', itemId: it.id, itemName: it.name, sku: it.sku,
+          delta: next - before, qtyBefore: before, qtyAfter: next, detail,
+        });
+        touched = true;
+      }
+    }
+    if (touched) { it.updatedAt = now; changed++; }
+  });
+
+  if (changed === 0) { toast(t('bulkNoChange'), 'error'); return; }
+  if (cat || priceMode !== 'keep') {
+    recordHistory({ type: 'bulk', itemId: '', itemName: '', sku: '', detail: t('bulkSummary', { n: changed }) });
+  }
+  saveItems();
+  render();
+  closeBulkEdit();
+  toastWithUndo(t('bulkToast', { n: changed }), 'success', {
+    type: 'bulk',
+    label: t('undoBulkEdit', { n: changed }),
+    inverse: () => {
+      for (const snap of snapshots) {
+        const idx = items.findIndex((it) => it.id === snap.id);
+        if (idx >= 0) items[idx] = snap;
+      }
+      saveItems();
+    },
+  });
+}
+
+function labelHtml(item) {
+  const svg = renderQrSvg(codeValue(item));
+  if (!svg) return '';
+  return `
+    <div class="print-label">
+      <div class="print-name">${escapeHtml(item.name)}</div>
+      <div class="print-sku">${escapeHtml(item.sku || '')}</div>
+      ${svg}
+      <div class="print-loc">${escapeHtml(item.location || '')}</div>
+    </div>`;
+}
+
+function batchPrintLabels() {
+  const selected = items.filter((it) => selectedIds.has(it.id));
+  if (selected.length === 0) {
+    toast(t('selectAtLeastOne'), 'error');
+    return;
+  }
+  $('#printArea').innerHTML = '<div class="print-sheet">' + selected.map(labelHtml).join('') + '</div>';
+  window.print();
+  toast(t('sendingLabels', { n: selected.length }));
+}
+
+/* ---------- Stock-take count sheet ---------- */
+
+// Prints a physical count sheet for the current filtered view: walk the
+// warehouse, write the actual quantity in the blank Counted column, compare
+// against Expected. Language + currency come from the active settings.
+function printCountSheet() {
+  const list = getFiltered();
+  if (list.length === 0) {
+    toast(t('countSheetEmpty'), 'error');
+    return;
+  }
+  const scope = state.category !== 'all' ? state.category : t('allCategories');
+  const scopeLine = scope + (state.lowStockOnly ? ' · ' + t('lowStockOnly') : '');
+  const totalValue = list.reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unitPrice) || 0), 0);
+
+  const rows = list.map((it, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(it.name)}</td>
+        <td>${escapeHtml(it.sku || '—')}</td>
+        <td>${escapeHtml(it.location || '—')}</td>
+        <td class="num">${fmtCurrency(Number(it.unitPrice) || 0)}</td>
+        <td class="num">${(Number(it.quantity) || 0).toLocaleString()}</td>
+        <td class="counted"></td>
+        <td class="variance"></td>
+      </tr>`).join('');
+
+  $('#printArea').innerHTML = `
+    <div class="print-count">
+      <h1>${escapeHtml(t('countSheetTitle'))}</h1>
+      <div class="pc-sub">${escapeHtml(scopeLine)} · ${list.length.toLocaleString()} ${escapeHtml(t('countSheetItems', { n: list.length }))}</div>
+      <div class="pc-meta">${escapeHtml(t('countSheetDate'))}: ${escapeHtml(new Date().toLocaleString(uiLocale()))}</div>
+      <table class="pc-table">
+        <thead><tr>
+          <th>#</th>
+          <th>${escapeHtml(t('thItem'))}</th>
+          <th>${escapeHtml(t('skuLabel'))}</th>
+          <th>${escapeHtml(t('thLocation'))}</th>
+          <th class="num">${escapeHtml(t('thUnitPrice'))}</th>
+          <th class="num">${escapeHtml(t('countSheetExpected'))}</th>
+          <th>${escapeHtml(t('countSheetCounted'))}</th>
+          <th>${escapeHtml(t('countSheetVariance'))}</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="pc-total">${escapeHtml(t('countSheetTotal'))}: <strong>${fmtCurrency(totalValue)}</strong></div>
+      <div class="pc-foot">
+        <div class="pc-sign">${escapeHtml(t('countSheetCountedBy'))}: ________________</div>
+        <div class="pc-sign">${escapeHtml(t('countSheetVerifiedBy'))}: ________________</div>
+      </div>
+    </div>`;
+  window.print();
+  toast(t('countSheetToast', { n: list.length }));
+}
+
+/* ---------- Modal ---------- */
+
+function openModal(item) {
+  const editing = Boolean(item);
+  $('#modalTitle').textContent = editing ? t('modalEditTitle') : t('modalAddTitle');
+  $('#saveBtn').textContent = editing ? t('saveChangesBtn') : t('saveItemBtn');
+  $('#itemId').value = item ? item.id : '';
+  $('#fName').value = item ? item.name : '';
+  $('#fSku').value = item ? (item.sku || '') : '';
+  $('#fCategory').value = item ? (item.category || '') : '';
+  $('#fQuantity').value = item ? item.quantity : '';
+  $('#fUnitPrice').value = item ? (item.unitPrice ?? '') : '';
+  $('#fCost').value = item ? (item.costPrice ?? '') : '';
+  $('#fInvoice').value = '';
+  $('#invoiceHint').textContent = '';
+  $('#fMinStock').value = item ? (item.minStock ?? 0) : '';
+  $('#fLocation').value = item ? (item.location || '') : '';
+  updateMarginHint();
+  $('#modalBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => $('#fName').focus(), 30);
+}
+
+function closeModal() {
+  $('#modalBackdrop').hidden = true;
+  document.body.style.overflow = '';
+}
+
+function handleSubmit(event) {
+  event.preventDefault();
+  const form = event.target;
+
+  let valid = true;
+  form.querySelectorAll('input').forEach((input) => input.classList.remove('invalid'));
+
+  const name = $('#fName').value.trim();
+  if (!name) {
+    markInvalid('#fName');
+    valid = false;
+  }
+
+  const quantity = Number($('#fQuantity').value);
+  if ($('#fQuantity').value === '' || !Number.isFinite(quantity) || quantity < 0) {
+    markInvalid('#fQuantity');
+    valid = false;
+  }
+
+  if (!valid) {
+    toast(t('reqFieldsError'), 'error');
+    return;
+  }
+
+  const id = $('#itemId').value;
+  const sku = $('#fSku').value.trim();
+  const unitPrice = $('#fUnitPrice').value === '' ? 0 : Math.max(0, Number($('#fUnitPrice').value) || 0);
+  const costPrice = $('#fCost').value === '' ? 0 : Math.max(0, Number($('#fCost').value) || 0);
+
+  const data = {
+    name,
+    sku,
+    category: $('#fCategory').value.trim(),
+    quantity: Math.floor(quantity),
+    unitPrice,
+    costPrice,
+    minStock: Math.max(0, Math.floor(Number($('#fMinStock').value) || 0)),
+    location: $('#fLocation').value.trim(),
+  };
+
+  if (id) {
+    const idx = items.findIndex((it) => it.id === id);
+    if (idx !== -1) {
+      const prev = items[idx];
+      items[idx] = { ...prev, ...data, updatedAt: new Date().toISOString() };
+      recordHistory({
+        type: 'updated',
+        itemId: items[idx].id,
+        itemName: items[idx].name,
+        sku: items[idx].sku,
+        qtyBefore: prev.quantity,
+        qtyAfter: items[idx].quantity,
+      });
+    }
+    toast(t('itemUpdated'));
+  } else {
+    const item = { ...data, id: uid(), updatedAt: new Date().toISOString() };
+    items.push(item);
+    recordHistory({
+      type: 'added',
+      itemId: item.id,
+      itemName: item.name,
+      sku: item.sku,
+      qtyAfter: item.quantity,
+    });
+    toast(t('itemAdded'));
+  }
+
+  // A category typed straight into the form becomes a managed category too.
+  registerCategory(data.category);
+
+  saveItems();
+  closeModal();
+  render();
+  if (!$('#settingsBackdrop').hidden) renderCategoryManager();
+}
+
+function markInvalid(sel) {
+  $(sel).classList.add('invalid');
+}
+
+/* ---------- Cost price & invoice conversion ---------- */
+
+// Margin hint under the cost field: shows the gross margin, or a warning if
+// cost is at/above the retail price.
+function updateMarginHint() {
+  const el = $('#costHint');
+  if (!el) return;
+  const cost = Number($('#fCost').value) || 0;
+  const price = Number($('#fUnitPrice').value) || 0;
+  if (cost <= 0 || price <= 0) {
+    el.textContent = '';
+    el.classList.remove('warn-hint');
+    return;
+  }
+  if (cost >= price) {
+    el.textContent = t('costAbovePrice');
+    el.classList.add('warn-hint');
+    return;
+  }
+  el.classList.remove('warn-hint');
+  el.textContent = t('marginHint', { pct: Math.round(((price - cost) / price) * 100) });
+}
+
+// Live converter: type the supplier invoice amount in the opposite currency
+// (e.g. USD while the app is in PHP mode) and the cost field fills in the
+// converted value using the configured exchange rate.
+function convertInvoiceInput() {
+  const val = Number($('#fInvoice').value);
+  const hint = $('#invoiceHint');
+  if (!Number.isFinite(val) || val <= 0) {
+    $('#fCost').value = '';
+    hint.textContent = '';
+    updateMarginHint();
+    return;
+  }
+  const rate = Number(settings.rate) > 0 ? Number(settings.rate) : DEFAULT_RATE;
+  const converted = settings.currency === 'PHP' ? val * rate : val / rate;
+  $('#fCost').value = Math.round(converted * 100) / 100;
+  hint.textContent = '≈ ' + fmtCurrency(converted);
+  updateMarginHint();
+}
+
+/* ---------- Item actions ---------- */
+
+function adjustQuantity(id, delta, detail) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  const next = (Number(it.quantity) || 0) + delta;
+  if (next < 0) {
+    toast(t('qtyBelowZero'), 'error');
+    return;
+  }
+  const before = it.quantity;
+  it.quantity = next;
+  it.updatedAt = new Date().toISOString();
+  recordHistory({
+    type: 'quantity',
+    itemId: it.id,
+    itemName: it.name,
+    sku: it.sku,
+    delta,
+    qtyBefore: before,
+    qtyAfter: next,
+    detail: detail || '',
+  });
+  saveItems();
+  render();
+}
+
+function deleteItem(id) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  const name = it.name;
+  if (!window.confirm(t('deleteConfirm', { name }))) return;
+  // Snapshot the item for undo
+  const snapshot = { ...it };
+  const histSnapshot = history.filter((h) => h.itemId === id);
+  recordHistory({ type: 'deleted', itemId: it.id, itemName: it.name, sku: it.sku, qtyBefore: it.quantity });
+  selectedIds.delete(id);
+  items = items.filter((x) => x.id !== id);
+  saveItems();
+  render();
+  toastWithUndo(t('itemDeleted'), 'success', {
+    type: 'delete',
+    label: t('undoDeleteItem', { name }),
+    inverse: () => {
+      items.push(snapshot);
+      // Restore related history entries
+      history = [...history, ...histSnapshot];
+      saveItems();
+      saveHistory();
+    },
+  });
+}
+
+/* ---------- CSV export / import ---------- */
+
+function toCsvValue(value) {
+  const s = String(value ?? '');
+  return /[",\n]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s;
+}
+
+function downloadBlob(text, filename, mime) {
+  const blob = new Blob(['\uFEFF' + text], { type: mime + ';charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportCsv() {
+  if (items.length === 0) {
+    toast(t('nothingToExport'), 'error');
+    return;
+  }
+  const header = [t('csvName'), t('csvSku'), t('csvCategory'), t('csvQuantity'), t('csvUnitPrice'), t('csvCostPrice'), t('csvMinStock'), t('csvLocation')];
+  const rows = items.map((it) => [
+    it.name, it.sku || '', it.category || '', it.quantity,
+    it.unitPrice ?? 0, it.costPrice ?? 0, it.minStock ?? 0, it.location || '',
+  ]);
+  const csv = [header, ...rows].map((r) => r.map(toCsvValue).join(',')).join('\r\n');
+
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'inventory-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  toast(t('exportedItems', { n: items.length }));
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(field); field = '';
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.some((c) => c !== '')) rows.push(row);
+      row = [];
+    } else {
+      field += ch;
+    }
+  }
+  row.push(field);
+  if (row.some((c) => c !== '')) rows.push(row);
+  return rows;
+}
+
+function handleImport(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const rows = parseCsv(String(reader.result));
+      if (rows.length < 2) {
+        toast(t('csvNeedsHeader'), 'error');
+        return;
+      }
+      const header = rows[0].map((h) => h.trim().toLowerCase());
+      // Accept both English and Tagalog header names so files exported in
+      // either language round-trip cleanly.
+      const col = (names) => {
+        for (const name of names) {
+          const i = header.indexOf(name);
+          if (i >= 0) return i;
+        }
+        return -1;
+      };
+      const idx = {
+        name: col(['name', 'pangalan', 'item', 'pangalan ng item']),
+        sku: col(['sku']),
+        category: col(['category', 'kategorya']),
+        quantity: col(['quantity', 'qty', 'dami']),
+        unitPrice: col(['unit price', 'presyo bawat unit', 'price', 'presyo']),
+        costPrice: col(['cost price', 'presyo ng puhunan', 'cost']),
+        minStock: col(['min stock', 'min. stock', 'min']),
+        location: col(['location', 'loc', 'lokasyon']),
+      };
+      if (idx.name < 0) idx.name = 0;
+      if (idx.quantity < 0) idx.quantity = 3;
+      if (idx.unitPrice < 0) idx.unitPrice = 4;
+
+      let added = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      for (const row of rows.slice(1)) {
+        const name = String(row[idx.name] ?? '').trim();
+        if (!name) { skipped++; continue; }
+        const sku = idx.sku >= 0 ? String(row[idx.sku] ?? '').trim() : '';
+        const category = idx.category >= 0 ? String(row[idx.category] ?? '').trim() : '';
+        const quantity = Math.max(0, Math.floor(Number(row[idx.quantity]) || 0));
+        const unitPrice = Math.max(0, Number(row[idx.unitPrice]) || 0);
+        const costPrice = idx.costPrice >= 0 ? Math.max(0, Number(row[idx.costPrice]) || 0) : 0;
+        const minStock = Math.max(0, Math.floor(Number(idx.minStock >= 0 ? row[idx.minStock] : 0) || 0));
+        const location = idx.location >= 0 ? String(row[idx.location] ?? '').trim() : '';
+
+        const existing = sku ? items.find((it) => it.sku && it.sku.toLowerCase() === sku.toLowerCase()) : null;
+        if (existing) {
+          Object.assign(existing, { name, category, quantity, unitPrice, costPrice, minStock, location, updatedAt: new Date().toISOString() });
+          updated++;
+        } else {
+          items.push({
+            id: uid(), name, sku, category, quantity, unitPrice, costPrice, minStock, location,
+            updatedAt: new Date().toISOString(),
+          });
+          added++;
+        }
+      }
+
+      saveItems();
+      render();
+      const parts = [];
+      if (added) parts.push(t('addedShort', { n: added }));
+      if (updated) parts.push(t('updatedShort', { n: updated }));
+      if (skipped) parts.push(t('skippedShort', { n: skipped }));
+      recordHistory({ type: 'import', detail: parts.join(', ') || t('noChanges') });
+      toast(t('importComplete', { detail: parts.join(', ') || t('noChanges') }));
+    } catch (err) {
+      toast(t('importFailed', { msg: err.message }), 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
+/* ---------- Toasts ---------- */
+
+function toast(message, type = 'success') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = message;
+  $('#toasts').appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transition = 'opacity 0.25s';
+    setTimeout(() => el.remove(), 250);
+  }, 2600);
+}
+
+/* ---------- Stock history view ---------- */
+
+const HISTORY_TYPE_LABEL = {
+  added: 'typeAdded',
+  updated: 'typeUpdated',
+  quantity: 'typeQuantity',
+  deleted: 'typeDeleted',
+  import: 'typeImport',
+  sold: 'typeSold',
+  bulk: 'typeBulk',
+};
+
+function timeAgo(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60_000) return t('justNow');
+  const min = Math.floor(diff / 60_000);
+  if (min < 60) return t('mAgo', { n: min });
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return t('hAgo', { n: hr });
+  const d = Math.floor(hr / 24);
+  if (d < 7) return t('dAgo', { n: d });
+  return fmtDate(iso);
+}
+
+function getFilteredHistory() {
+  const q = state.historySearch.trim().toLowerCase();
+  return history
+    .filter((h) => state.historyType === 'all' || h.type === state.historyType)
+    .filter((h) => !q || (h.itemName + ' ' + (h.sku || '')).toLowerCase().includes(q))
+    .slice()
+    .sort((a, b) => b.ts.localeCompare(a.ts));
+}
+
+function historyMeta(h) {
+  switch (h.type) {
+    case 'quantity':
+      return (h.detail ? h.detail + ' · ' : '') + `${h.delta > 0 ? '+' : ''}${h.delta} → ${h.qtyAfter}`;
+    case 'added':
+      return t('histAddedWith', { n: h.qtyAfter });
+    case 'updated':
+      return h.qtyBefore != null && h.qtyAfter != null && h.qtyBefore !== h.qtyAfter
+        ? t('histQtyChange', { a: h.qtyBefore, b: h.qtyAfter })
+        : t('histDetailsUpdated');
+    case 'deleted':
+      return t('histRemoved', { n: h.qtyBefore });
+    case 'sold':
+      return h.revenue != null
+        ? t('histSoldFor', { n: Math.abs(h.delta || 0), amount: fmtCurrency(h.revenue) })
+        : (h.detail || t('histSoldUnits', { n: Math.abs(h.delta || 0) }));
+    case 'import':
+      return h.detail || t('histCsvImport');
+    default:
+      return h.detail || '';
+  }
+}
+
+function renderHistory() {
+  const list = getFilteredHistory();
+  const el = $('#historyList');
+
+  if (list.length === 0) {
+    el.innerHTML = `<div class="history-empty">${
+      history.length === 0 ? t('histNoActivity') : t('histNoMatch')
+    }</div>`;
+    return;
+  }
+
+  el.innerHTML = list.map((h) => {
+    const label = t(HISTORY_TYPE_LABEL[h.type] || h.type);
+    return `
+      <div class="history-item">
+        <span class="history-dot ${h.type}"></span>
+        <div class="history-main">
+          <div class="history-title">
+            <span class="history-type ${h.type}">${escapeHtml(label)}</span>
+            ${h.itemName ? '<span> — ' + escapeHtml(h.itemName) + '</span>' : ''}
+          </div>
+          <div class="history-meta">${escapeHtml(historyMeta(h))}${h.sku ? ' · ' + escapeHtml(h.sku) : ''}</div>
+        </div>
+        <div class="history-time" title="${escapeHtml(h.ts)}">${timeAgo(h.ts)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function openHistory() {
+  $('#historyBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+  renderHistory();
+}
+
+function closeHistory() {
+  $('#historyBackdrop').hidden = true;
+  document.body.style.overflow = '';
+}
+
+/* ---------- Sales: record & best sellers ---------- */
+
+let sellingItemId = null;
+let sellersPeriod = 'all';
+let sellersTab = 'items'; // 'items' | 'categories'
+const expandedCategories = new Set(); // category names currently expanded in the Categories tab
+
+function openSellModal(item) {
+  if (!item) return;
+  const available = Number(item.quantity) || 0;
+  if (available <= 0) {
+    toast(t('outOfStockSellToast'), 'error');
+    return;
+  }
+  sellingItemId = item.id;
+  $('#sellName').textContent = item.name;
+  $('#sellSku').textContent = item.sku ? t('skuPrefix', { sku: item.sku }) : '';
+  $('#sellStock').textContent = t('inStockEach', { n: available.toLocaleString(), price: fmtCurrency(Number(item.unitPrice) || 0) });
+  const qtyInput = $('#sellQty');
+  qtyInput.value = 1;
+  qtyInput.max = available;
+  updateSellTotal();
+  $('#sellBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+  qtyInput.focus();
+  qtyInput.select();
+}
+
+function closeSellModal() {
+  $('#sellBackdrop').hidden = true;
+  document.body.style.overflow = '';
+  sellingItemId = null;
+}
+
+function updateSellTotal() {
+  const item = items.find((it) => it.id === sellingItemId);
+  if (!item) return;
+  const qty = Math.floor(Number($('#sellQty').value) || 0);
+  const available = Number(item.quantity) || 0;
+  const capped = Math.min(qty, available);
+  $('#sellTotal').textContent = fmtCurrency(capped * (Number(item.unitPrice) || 0)) + (capped < qty ? t('limitedTo', { n: capped }) : '');
+}
+
+function confirmSale() {
+  const item = items.find((it) => it.id === sellingItemId);
+  if (!item) {
+    toast(t('itemGone'), 'error');
+    closeSellModal();
+    return;
+  }
+  const qty = Math.floor(Number($('#sellQty').value) || 0);
+  const available = Number(item.quantity) || 0;
+  const sold = Math.min(qty, available);
+  if (sold <= 0) {
+    toast(t('enterQtySell'), 'error');
+    return;
+  }
+  // Snapshot for undo
+  const itemSnap = { id: item.id, quantity: item.quantity, updatedAt: item.updatedAt };
+  const before = available;
+  item.quantity = before - sold;
+  item.updatedAt = new Date().toISOString();
+  const revenue = recordSale(item, sold);
+  const saleRecord = sales[sales.length - 1];
+  saveItems();
+  recordHistory({
+    type: 'sold',
+    itemId: item.id,
+    itemName: item.name,
+    sku: item.sku || '',
+    delta: -sold,
+    qtyBefore: before,
+    qtyAfter: item.quantity,
+    revenue,
+    detail: t('histSoldFor', { n: sold, amount: fmtCurrency(revenue) }),
+  });
+  closeSellModal();
+  render();
+  toastWithUndo(t('soldToast', { n: sold, name: item.name, amount: fmtCurrency(revenue) }), 'success', {
+    type: 'sale',
+    label: t('undoSale', { n: sold }),
+    inverse: () => {
+      const it = items.find((i) => i.id === itemSnap.id);
+      if (it) { it.quantity = itemSnap.quantity; it.updatedAt = itemSnap.updatedAt; }
+      const idx = sales.findIndex((s) => s.id === saleRecord.id);
+      if (idx >= 0) sales.splice(idx, 1);
+      saveItems();
+      saveSales();
+    },
+  });
+}
+
+function getSellers(period) {
+  const cutoff = period === 'all' ? 0 : Date.now() - Number(period) * 86400000;
+  const map = new Map();
+  for (const s of sales) {
+    if (cutoff && new Date(s.ts).getTime() < cutoff) continue;
+    const key = s.itemId || s.sku || s.name;
+    if (!map.has(key)) {
+      map.set(key, { itemId: s.itemId, sku: s.sku || '', name: s.name, qty: 0, revenue: 0 });
+    }
+    const e = map.get(key);
+    e.qty += Number(s.qty) || 0;
+    e.revenue += Number(s.revenue) || 0;
+  }
+  return [...map.values()].sort((a, b) => b.qty - a.qty || b.revenue - a.revenue);
+}
+
+function getCategorySellers(period) {
+  const cutoff = period === 'all' ? 0 : Date.now() - Number(period) * 86400000;
+  const map = new Map();
+  for (const s of sales) {
+    if (cutoff && new Date(s.ts).getTime() < cutoff) continue;
+    const item = items.find((it) => it.id === s.itemId);
+    const cat = (item && item.category) || '';
+    if (!map.has(cat)) {
+      map.set(cat, { category: cat || '(Uncategorized)', qty: 0, revenue: 0, itemIds: new Set(), items: {} });
+    }
+    const e = map.get(cat);
+    e.qty += Number(s.qty) || 0;
+    e.revenue += Number(s.revenue) || 0;
+    if (s.itemId) e.itemIds.add(s.itemId);
+    // Aggregate per-item within this category
+    const key = s.itemId || s.sku || s.name;
+    if (!e.items[key]) e.items[key] = { itemId: s.itemId, sku: s.sku || '', name: s.name, qty: 0, revenue: 0 };
+    const it = e.items[key];
+    it.qty += Number(s.qty) || 0;
+    it.revenue += Number(s.revenue) || 0;
+  }
+  const arr = [...map.values()].map((e) => {
+    const itemList = Object.values(e.items).sort((a, b) => b.revenue - a.revenue || b.qty - a.qty);
+    return { ...e, itemCount: e.itemIds.size, items: itemList, itemIds: undefined };
+  });
+  return arr.sort((a, b) => b.revenue - a.revenue || b.qty - a.qty);
+}
+
+// Get category sellers for the PREVIOUS period (same duration, immediately before current window).
+// Returns null for 'all' since there's no meaningful "before all time".
+function getCategorySellersPrev(period) {
+  if (period === 'all' || !period) return null;
+  const days = Number(period);
+  const now = Date.now();
+  const prevEnd = now - days * 86400000;
+  const prevStart = prevEnd - days * 86400000;
+  const map = new Map();
+  for (const s of sales) {
+    const t = new Date(s.ts).getTime();
+    if (t < prevStart || t >= prevEnd) continue;
+    const item = items.find((it) => it.id === s.itemId);
+    const cat = (item && item.category) || '';
+    if (!map.has(cat)) map.set(cat, { category: cat || '(Uncategorized)', qty: 0, revenue: 0 });
+    const e = map.get(cat);
+    e.qty += Number(s.qty) || 0;
+    e.revenue += Number(s.revenue) || 0;
+  }
+  return [...map.values()];
+}
+
+// Calculate percentage change between two values. Returns { pct, dir }.
+function calcChange(current, previous) {
+  if (previous === 0 && current === 0) return { pct: 0, dir: 'flat' };
+  if (previous === 0) return { pct: 100, dir: 'up' };
+  if (current === 0) return { pct: 100, dir: 'down' };
+  const pct = ((current - previous) / previous) * 100;
+  if (Math.abs(pct) < 0.5) return { pct: 0, dir: 'flat' };
+  return { pct: Math.abs(pct), dir: pct > 0 ? 'up' : 'down' };
+}
+
+function changeBadge(change) {
+  if (!change) return '';
+  if (change.dir === 'up') return `<span class="cat-change up">${escapeHtml(t('catChangeUp', { pct: change.pct.toFixed(0) }))}</span>`;
+  if (change.dir === 'down') return `<span class="cat-change down">${escapeHtml(t('catChangeDown', { pct: change.pct.toFixed(0) }))}</span>`;
+  return `<span class="cat-change flat">${escapeHtml(t('catChangeFlat'))}</span>`;
+}
+
+function renderSellers() {
+  // Update tab active state
+  const tabBtns = document.querySelectorAll('.sellers-tab');
+  tabBtns.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === sellersTab));
+
+  // Toggle visibility of trend chart vs donut chart
+  const trendWrap = $('.trend-wrap');
+  const donutWrap = $('#categoryDonutWrap');
+  if (trendWrap) trendWrap.hidden = sellersTab === 'categories';
+  if (donutWrap) donutWrap.hidden = sellersTab !== 'categories';
+
+  if (sellersTab === 'categories') {
+    renderCategorySellers();
+    return;
+  }
+
+  const list = getSellers(sellersPeriod);
+  const el = $('#sellersList');
+
+  const totalRevenue = list.reduce((s, e) => s + e.revenue, 0);
+  const totalQty = list.reduce((s, e) => s + e.qty, 0);
+  $('#sellersSummary').innerHTML = totalQty > 0
+    ? `<strong>${totalQty.toLocaleString()}</strong> ${escapeHtml(t('unitsSoldWord'))} · <strong>${fmtCurrency(totalRevenue)}</strong> ${escapeHtml(t('revenueWord'))}`
+    : '';
+
+  if (list.length === 0) {
+    el.innerHTML = `<div class="sellers-empty">${
+      sales.length === 0
+        ? t('noSalesYet')
+        : t('noSalesInPeriod')
+    }</div>`;
+    return;
+  }
+
+  el.innerHTML = list.map((e, i) => {
+    const share = totalRevenue > 0 ? (e.revenue / totalRevenue) * 100 : 0;
+    return `
+      <div class="seller-row">
+        <div class="seller-rank">${i + 1}</div>
+        <div class="seller-main">
+          <div class="seller-name">${escapeHtml(e.name)}</div>
+          <div class="seller-sku">${escapeHtml(e.sku || '')}</div>
+          <div class="seller-bar"><div class="seller-bar-fill" style="width:${share.toFixed(1)}%"></div></div>
+        </div>
+        <div class="seller-nums">
+          <div class="seller-qty">${e.qty.toLocaleString()} ${escapeHtml(t('soldWord'))}</div>
+          <div class="seller-rev">${fmtCurrency(e.revenue)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderCategorySellers() {
+  const catList = getCategorySellers(sellersPeriod);
+  const prevList = getCategorySellersPrev(sellersPeriod);
+  const el = $('#sellersList');
+
+  const totalRevenue = catList.reduce((s, e) => s + e.revenue, 0);
+  const totalQty = catList.reduce((s, e) => s + e.qty, 0);
+  const totalItems = catList.reduce((s, e) => s + e.itemCount, 0);
+
+  // Previous period totals for the summary line
+  const prevTotalRevenue = prevList ? prevList.reduce((s, e) => s + e.revenue, 0) : 0;
+  const prevTotalQty = prevList ? prevList.reduce((s, e) => s + e.qty, 0) : 0;
+  const totalRevChange = prevList ? calcChange(totalRevenue, prevTotalRevenue) : null;
+  const totalQtyChange = prevList ? calcChange(totalQty, prevTotalQty) : null;
+
+  let summaryHtml = '';
+  if (totalQty > 0) {
+    summaryHtml = `<strong>${catList.length}</strong> ${escapeHtml(t('allCategories').toLowerCase())} · <strong>${totalQty.toLocaleString()}</strong> ${escapeHtml(t('unitsSoldWord'))}`;
+    if (totalQtyChange && prevList) summaryHtml += ` ${changeBadge(totalQtyChange)}`;
+    summaryHtml += ` · <strong>${fmtCurrency(totalRevenue)}</strong> ${escapeHtml(t('revenueWord'))}`;
+    if (totalRevChange && prevList) summaryHtml += ` ${changeBadge(totalRevChange)}`;
+  }
+  $('#sellersSummary').innerHTML = summaryHtml;
+
+  if (catList.length === 0) {
+    el.innerHTML = `<div class="sellers-empty">${
+      sales.length === 0
+        ? t('noSalesYet')
+        : t('noSalesInPeriod')
+    }</div>`;
+    return;
+  }
+
+  // Build a lookup of previous period revenue/qty by category name
+  const prevMap = new Map();
+  if (prevList) prevList.forEach((e) => prevMap.set(e.category, e));
+
+  el.innerHTML = catList.map((e, i) => {
+    const share = totalRevenue > 0 ? (e.revenue / totalRevenue) * 100 : 0;
+    const prev = prevMap.get(e.category);
+    const revChange = prevList ? calcChange(e.revenue, prev ? prev.revenue : 0) : null;
+    const qtyChange = prevList ? calcChange(e.qty, prev ? prev.qty : 0) : null;
+    const isNew = prevList && !prev;
+    const isExpanded = expandedCategories.has(e.category);
+    const catTotal = e.revenue;
+
+    // Render sub-items (individual products in this category)
+    let subRows = '';
+    if (isExpanded && e.items && e.items.length > 0) {
+      subRows = '<div class="category-sub-items">' + e.items.map((it, j) => {
+        const itShare = catTotal > 0 ? (it.revenue / catTotal) * 100 : 0;
+        return `<div class="category-sub-item">
+          <span class="sub-item-rank">${j + 1}</span>
+          <span class="sub-item-name">${escapeHtml(it.name)}</span>
+          <span class="sub-item-sku">${escapeHtml(it.sku)}</span>
+          <span class="sub-item-bar"><span class="sub-item-bar-fill" style="width:${itShare.toFixed(1)}%"></span></span>
+          <span class="sub-item-qty">${it.qty.toLocaleString()} ${escapeHtml(t('soldWord'))}</span>
+          <span class="sub-item-rev">${fmtCurrency(it.revenue)}</span>
+        </div>`;
+      }).join('') + '</div>';
+    }
+
+    return `
+      <div class="seller-row category-row${isExpanded ? ' expanded' : ''}" data-cat="${escapeHtml(e.category)}" title="${escapeHtml(t('catExpandHint'))}" style="cursor:pointer">
+        <div class="seller-rank cat-expand-btn" data-cat="${escapeHtml(e.category)}">
+          <svg class="cat-chevron${isExpanded ? ' open' : ''}" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="seller-main">
+          <div class="seller-name">${escapeHtml(e.category)}${isNew ? ' <span class="cat-change new">' + escapeHtml(t('catNewCategory')) + '</span>' : ''}</div>
+          <div class="seller-sku">${escapeHtml(t('catItemsInCat', { n: e.itemCount }))} · ${escapeHtml(t('catShareOfTotal', { pct: share.toFixed(1) }))}</div>
+          <div class="seller-bar"><div class="seller-bar-fill" style="width:${share.toFixed(1)}%"></div></div>
+        </div>
+        <div class="seller-nums">
+          <div class="seller-qty">${e.qty.toLocaleString()} ${escapeHtml(t('soldWord'))}${qtyChange ? ' ' + changeBadge(qtyChange) : ''}</div>
+          <div class="seller-rev">${fmtCurrency(e.revenue)}${revChange ? ' ' + changeBadge(revChange) : ''}</div>
+        </div>
+      </div>
+      ${subRows}
+    `;
+  }).join('');
+
+  // Draw donut chart (pass prevMap for legend change indicators)
+  drawCategoryDonut(catList, totalRevenue, prevMap);
+}
+
+/* ---------- Category donut chart ---------- */
+
+const DONUT_COLORS = [
+  '#4f46e5', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6',
+  '#06b6d4', '#f97316', '#ec4899', '#84cc16', '#6366f1',
+];
+const DONUT_COLORS_DARK = [
+  '#818cf8', '#fbbf24', '#34d399', '#f87171', '#a78bfa',
+  '#22d3ee', '#fb923c', '#f472b6', '#a3e635', '#818cf8',
+];
+
+function drawCategoryDonut(catList, totalRevenue, prevMap) {
+  const wrap = $('#categoryDonutWrap');
+  const canvas = $('#categoryDonutCanvas');
+  const legend = $('#categoryDonutLegend');
+  if (!wrap || !canvas || !legend) return;
+
+  if (catList.length === 0 || totalRevenue <= 0) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+
+  const isDark = currentTheme() === 'dark';
+  const palette = isDark ? DONUT_COLORS_DARK : DONUT_COLORS;
+  const dpr = window.devicePixelRatio || 1;
+  const size = 180;
+  canvas.width = size * dpr;
+  canvas.height = size * dpr;
+  canvas.style.width = size + 'px';
+  canvas.style.height = size + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const cx = size / 2;
+  const cy = size / 2;
+  const outerR = size / 2 - 8;
+  const innerR = outerR * 0.58;
+
+  // Background ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+  ctx.arc(cx, cy, innerR, Math.PI * 2, 0, true);
+  ctx.closePath();
+  ctx.fillStyle = isDark ? '#2a2d35' : '#f1f5f9';
+  ctx.fill();
+
+  // Draw arcs
+  let startAngle = -Math.PI / 2;
+  catList.forEach((cat, i) => {
+    const share = cat.revenue / totalRevenue;
+    const sliceAngle = share * Math.PI * 2;
+    if (sliceAngle <= 0) return;
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, startAngle, startAngle + sliceAngle);
+    ctx.arc(cx, cy, innerR, startAngle + sliceAngle, startAngle, true);
+    ctx.closePath();
+    ctx.fillStyle = palette[i % palette.length];
+    ctx.fill();
+    startAngle += sliceAngle;
+  });
+
+  // Center text
+  ctx.fillStyle = isDark ? '#e2e8f0' : '#1e293b';
+  ctx.font = '700 18px -apple-system, Segoe UI, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(fmtCurrency(totalRevenue), cx, cy - 6);
+  ctx.fillStyle = isDark ? '#94a3b8' : '#64748b';
+  ctx.font = '11px -apple-system, Segoe UI, sans-serif';
+  ctx.fillText(t('revenueWord'), cx, cy + 14);
+
+  // Legend
+  legend.innerHTML = catList.map((cat, i) => {
+    const pct = ((cat.revenue / totalRevenue) * 100).toFixed(1);
+    let changeHtml = '';
+    if (prevMap && prevMap.size > 0) {
+      const prev = prevMap.get(cat.category);
+      const ch = calcChange(cat.revenue, prev ? prev.revenue : 0);
+      if (!prev) changeHtml = `<span class="cat-change new">${escapeHtml(t('catNewCategory'))}</span>`;
+      else changeHtml = changeBadge(ch);
+    }
+    return `<div class="category-donut-legend-item">
+      <span class="category-donut-legend-swatch" style="background:${palette[i % palette.length]}"></span>
+      <span class="category-donut-legend-name">${escapeHtml(cat.category)}</span>
+      <span class="category-donut-legend-pct">${pct}%${changeHtml}</span>
+    </div>`;
+  }).join('');
+}
+
+function openSellers() {
+  $('#sellersBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+  $('#sellersPeriod').value = sellersPeriod;
+  renderSellers();
+  if (sellersTab === 'items') drawTrendChart(sellersPeriod);
+}
+
+function closeSellers() {
+  $('#sellersBackdrop').hidden = true;
+  document.body.style.overflow = '';
+}
+
+function exportSellers() {
+  if (sellersTab === 'categories') {
+    const catList = getCategorySellers(sellersPeriod);
+    if (catList.length === 0) {
+      toast(t('nothingToExport'), 'error');
+      return;
+    }
+    const periodLabel = periodLabelFor(sellersPeriod);
+    const rows = [
+      [t('colRank'), t('categoryLabel'), t('catItemsInCat', { n: '' }).trim(), t('colUnitsSold'), t('colRevenue'), t('periodLabel')],
+      ...catList.map((e, i) => [i + 1, e.category, e.itemCount, e.qty, e.revenue.toFixed(2), periodLabel]),
+    ];
+    const csv = rows
+      .map((r) => r.map((v) => /[,"\n]/.test(String(v)) ? '"' + String(v).replaceAll('"', '""') + '"' : v).join(','))
+      .join('\n');
+    downloadBlob(csv, 'best-categories.csv', 'text/csv');
+    toast(t('sellersExported'));
+    return;
+  }
+  const list = getSellers(sellersPeriod);
+  if (list.length === 0) {
+    toast(t('nothingToExport'), 'error');
+    return;
+  }
+  const periodLabel = periodLabelFor(sellersPeriod);
+  const rows = [
+    [t('colRank'), t('colItem'), t('colSku'), t('colUnitsSold'), t('colRevenue'), t('periodLabel')],
+    ...list.map((e, i) => [i + 1, e.name, e.sku, e.qty, e.revenue.toFixed(2), periodLabel]),
+  ];
+  const csv = rows
+    .map((r) => r.map((v) => /[,"\n]/.test(String(v)) ? '"' + String(v).replaceAll('"', '""') + '"' : v).join(','))
+    .join('\n');
+  downloadBlob(csv, 'best-sellers.csv', 'text/csv');
+  toast(t('sellersExported'));
+}
+
+/* ---------- Revenue trend chart ---------- */
+
+function periodLabelFor(p) {
+  if (p === 'all') return t('periodAll');
+  if (p === '1') return t('periodToday');
+  return t('periodLastN', { n: p });
+}
+
+function niceCeil(v) {
+  if (v <= 0) return 1;
+  const exp = Math.floor(Math.log10(v));
+  const base = Math.pow(10, exp);
+  const frac = v / base;
+  const nice = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 5 ? 5 : 10;
+  return nice * base;
+}
+
+function shortMoney(v) {
+  const sym = currencySymbol();
+  if (v >= 1000) {
+    const k = v / 1000;
+    return sym + (k >= 10 ? Math.round(k) + 'k' : k.toFixed(1).replace(/\.0$/, '') + 'k');
+  }
+  return sym + Math.round(v);
+}
+
+function trendBuckets(period) {
+  const now = new Date();
+  const startOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+  if (period === 'all') {
+    const map = new Map();
+    for (const s of sales) {
+      const d = new Date(s.ts);
+      const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+      const e = map.get(key) || { label: key, revenue: 0, units: 0 };
+      e.revenue += Number(s.revenue) || 0;
+      e.units += Number(s.qty) || 0;
+      map.set(key, e);
+    }
+    const arr = [...map.values()].sort((a, b) => a.label.localeCompare(b.label)).slice(-12);
+    arr.forEach((b) => {
+      const [y, m] = b.label.split('-');
+      b.label = new Date(+y, +m - 1, 1).toLocaleDateString(uiLocale(), { month: 'short' });
+    });
+    return arr;
+  }
+
+  if (period === '1') {
+    const start = startOf(now);
+    const hours = now.getHours() + 1;
+    const buckets = [];
+    for (let i = 0; i < hours; i++) {
+      const d = new Date(start.getTime() + i * 3600000);
+      buckets.push({ label: d.toLocaleTimeString(uiLocale(), { hour: 'numeric' }), revenue: 0, units: 0, key: d.getHours() });
+    }
+    for (const s of sales) {
+      const d = new Date(s.ts);
+      if (d >= start && d.getHours() < hours) {
+        const b = buckets[d.getHours()];
+        b.revenue += Number(s.revenue) || 0;
+        b.units += Number(s.qty) || 0;
+      }
+    }
+    return buckets;
+  }
+
+  const days = Number(period);
+  const buckets = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(startOf(now).getTime() - i * 86400000);
+    buckets.push({
+      label: d.toLocaleDateString(uiLocale(), { month: 'short', day: 'numeric' }),
+      revenue: 0, units: 0, key: startOf(d).getTime(),
+    });
+  }
+  for (const s of sales) {
+    const d = new Date(s.ts);
+    const idx = buckets.findIndex((b) => b.key === startOf(d).getTime());
+    if (idx >= 0) {
+      buckets[idx].revenue += Number(s.revenue) || 0;
+      buckets[idx].units += Number(s.qty) || 0;
+    }
+  }
+  return buckets;
+}
+
+function drawTrend(ctx, buckets, rect, maxXLabels, colors) {
+  const grid = (colors && colors.grid) || '#e8eaf0';
+  const faint = (colors && colors.faint) || '#98a1b3';
+  const bar = (colors && colors.bar) || '#4f46e5';
+  const total = buckets.reduce((s, b) => s + b.revenue, 0);
+  ctx.save();
+  if (total <= 0) {
+    ctx.fillStyle = faint;
+    ctx.font = '13px -apple-system, Segoe UI, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(t('chartNoSales'), rect.x, rect.y + rect.h / 2);
+    ctx.restore();
+    return;
+  }
+  const padL = 44, padR = 6, padT = 10, padB = 22;
+  const w = rect.w - padL - padR;
+  const h = rect.h - padT - padB;
+  const maxV = niceCeil(Math.max(...buckets.map((b) => b.revenue), 1));
+  const steps = 4;
+
+  ctx.strokeStyle = grid;
+  ctx.lineWidth = 1;
+  ctx.font = '10px -apple-system, Segoe UI, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = faint;
+  for (let i = 0; i <= steps; i++) {
+    const v = maxV * i / steps;
+    const y = rect.y + padT + h - (h * i / steps);
+    ctx.beginPath();
+    ctx.moveTo(rect.x + padL, y);
+    ctx.lineTo(rect.x + padL + w, y);
+    ctx.stroke();
+    ctx.fillText(shortMoney(v), rect.x + padL - 6, y + 3);
+  }
+
+  const n = buckets.length;
+  const slot = w / n;
+  const barW = Math.max(3, Math.min(26, slot * 0.6));
+  ctx.fillStyle = bar;
+  buckets.forEach((b, i) => {
+    const bh = b.revenue > 0 ? Math.max(2, (b.revenue / maxV) * h) : 0;
+    const bx = rect.x + padL + slot * i + (slot - barW) / 2;
+    const by = rect.y + padT + h - bh;
+    if (bh > 0) ctx.fillRect(bx, by, barW, bh);
+  });
+
+  const step = Math.max(1, Math.ceil(n / maxXLabels));
+  ctx.textAlign = 'center';
+  ctx.fillStyle = faint;
+  buckets.forEach((b, i) => {
+    if (i % step === 0) ctx.fillText(b.label, rect.x + padL + slot * i + slot / 2, rect.y + rect.h - 6);
+  });
+  ctx.restore();
+}
+
+function drawTrendChart(period) {
+  const canvas = $('#trendCanvas');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 640;
+  const cssH = 180;
+  canvas.width = cssW * dpr;
+  canvas.height = cssH * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name) => cs.getPropertyValue(name).trim();
+  const colors = {
+    grid: v('--border') || '#e8eaf0',
+    faint: v('--text-faint') || '#98a1b3',
+    bar: v('--accent') || '#4f46e5',
+    bg: v('--card') || '#ffffff',
+  };
+  ctx.fillStyle = colors.bg;
+  ctx.fillRect(0, 0, cssW, cssH);
+  const buckets = trendBuckets(period);
+  const total = buckets.reduce((s, b) => s + b.revenue, 0);
+  $('#trendEmpty').hidden = total > 0;
+  if (total > 0) drawTrend(ctx, buckets, { x: 0, y: 0, w: cssW, h: cssH }, cssW < 480 ? 4 : 8, colors);
+}
+
+/* ---------- Sales report export (PNG / JPEG / PDF) ---------- */
+
+function renderReportCanvas(width, dpr) {
+  const periodLabel = periodLabelFor(sellersPeriod);
+  const pad = 26, rowH = 28, headH = 30, chartH = 180;
+  const showChart = sellersTab === 'items';
+
+  if (sellersTab === 'categories') {
+    const catList = getCategorySellers(sellersPeriod);
+    const totalRevenue = catList.reduce((s, e) => s + e.revenue, 0);
+    const totalQty = catList.reduce((s, e) => s + e.qty, 0);
+    const height = pad + 34 + 24 + 18 + headH + catList.length * rowH + 34 + pad;
+    const canvas = document.createElement('canvas');
+    canvas.width = width * dpr; canvas.height = height * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, width, height);
+    let y = pad;
+    ctx.fillStyle = '#171a21'; ctx.font = '700 22px -apple-system, Segoe UI, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(t('catRank'), pad, y + 20); y += 34;
+    ctx.fillStyle = '#647084'; ctx.font = '12px -apple-system, Segoe UI, sans-serif';
+    ctx.fillText(`${periodLabel} · ${t('exportedOn', { date: new Date().toLocaleString(uiLocale()) })}`, pad, y); y += 24;
+    ctx.fillStyle = '#171a21'; ctx.font = '600 13px -apple-system, Segoe UI, sans-serif';
+    ctx.fillText(`${catList.length} ${t('allCategories').toLowerCase()} · ${totalQty.toLocaleString()} ${t('unitsSoldWord')} · ${fmtCurrency(totalRevenue)} ${t('revenueWord')}`, pad, y); y += 18;
+    const cols = [
+      { t: t('colRank'), w: 50 },
+      { t: t('categoryLabel'), w: Math.floor((width - 2 * pad) * 0.42) },
+      { t: 'Items', w: 80 },
+      { t: t('colUnitsSold'), w: 100 },
+      { t: t('colRevenue'), w: 100 },
+    ];
+    ctx.fillStyle = '#f3f4f6'; ctx.fillRect(pad, y, width - 2 * pad, headH);
+    ctx.font = '700 12px -apple-system, Segoe UI, sans-serif'; ctx.fillStyle = '#171a21';
+    let hx = pad;
+    cols.forEach((c) => { const right = c.t === t('colRank') || c.t === t('colUnitsSold') || c.t === t('colRevenue'); ctx.textAlign = right ? 'right' : 'left'; ctx.fillText(c.t, right ? hx + c.w - 4 : hx + 4, y + 20); hx += c.w; });
+    y += headH;
+    ctx.font = '13px -apple-system, Segoe UI, sans-serif';
+    catList.forEach((e, i) => {
+      ctx.fillStyle = i % 2 === 1 ? '#fafbfc' : '#ffffff'; ctx.fillRect(pad, y, width - 2 * pad, rowH);
+      ctx.fillStyle = '#333';
+      const vals = [String(i + 1), e.category, String(e.itemCount), e.qty.toLocaleString(), fmtCurrency(e.revenue)];
+      hx = pad;
+      vals.forEach((v, ci) => { const c = cols[ci]; const right = ci === 0 || ci === 3 || ci === 4; ctx.textAlign = right ? 'right' : 'left'; const clipped = v.length > 40 ? v.slice(0, 39) + '…' : v; ctx.fillText(clipped, right ? hx + c.w - 4 : hx + 4, y + 19); hx += c.w; });
+      y += rowH;
+    });
+    ctx.fillStyle = '#98a1b3'; ctx.font = '11px -apple-system, Segoe UI, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(t('generatedBy'), pad, y + 18);
+    return canvas;
+  }
+
+  const list = getSellers(sellersPeriod);
+  const buckets = trendBuckets(sellersPeriod);
+  const totalRevenue = list.reduce((s, e) => s + e.revenue, 0);
+  const totalQty = list.reduce((s, e) => s + e.qty, 0);
+  const height = pad + 34 + 24 + 18 + (showChart ? chartH : 0) + headH + list.length * rowH + 34 + pad;
+  const canvas = document.createElement('canvas');
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  let y = pad;
+  ctx.fillStyle = '#171a21';
+  ctx.font = '700 22px -apple-system, Segoe UI, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(t('reportTitle'), pad, y + 20);
+  y += 34;
+  ctx.fillStyle = '#647084';
+  ctx.font = '12px -apple-system, Segoe UI, sans-serif';
+  ctx.fillText(`${periodLabel} · ${t('exportedOn', { date: new Date().toLocaleString(uiLocale()) })}`, pad, y);
+  y += 24;
+  ctx.fillStyle = '#171a21';
+  ctx.font = '600 13px -apple-system, Segoe UI, sans-serif';
+  ctx.fillText(`${totalQty.toLocaleString()} ${t('unitsSoldWord')} · ${fmtCurrency(totalRevenue)} ${t('revenueWord')}`, pad, y);
+  y += 18;
+
+  if (showChart) {
+    drawTrend(ctx, buckets, { x: pad, y, w: width - 2 * pad, h: chartH }, 8);
+    y += chartH;
+  }
+
+  const cols = [
+    { t: t('colRank'), w: 50 },
+    { t: t('colItem'), w: Math.floor((width - 2 * pad) * 0.42) },
+    { t: t('colSku'), w: 130 },
+    { t: t('colUnitsSold'), w: 90 },
+    { t: t('colRevenue'), w: 96 },
+  ];
+  ctx.fillStyle = '#f3f4f6';
+  ctx.fillRect(pad, y, width - 2 * pad, headH);
+  ctx.font = '700 12px -apple-system, Segoe UI, sans-serif';
+  ctx.fillStyle = '#171a21';
+  let hx = pad;
+  cols.forEach((c) => {
+    const right = c.t === t('colRank') || c.t === t('colUnitsSold') || c.t === t('colRevenue');
+    ctx.textAlign = right ? 'right' : 'left';
+    ctx.fillText(c.t, right ? hx + c.w - 4 : hx + 4, y + 20);
+    hx += c.w;
+  });
+  y += headH;
+
+  ctx.font = '13px -apple-system, Segoe UI, sans-serif';
+  list.forEach((e, i) => {
+    ctx.fillStyle = i % 2 === 1 ? '#fafbfc' : '#ffffff';
+    ctx.fillRect(pad, y, width - 2 * pad, rowH);
+    ctx.fillStyle = '#333';
+    const vals = [String(i + 1), e.name, e.sku || '—', e.qty.toLocaleString(), fmtCurrency(e.revenue)];
+    hx = pad;
+    vals.forEach((v, ci) => {
+      const c = cols[ci];
+      const right = ci === 0 || ci === 3 || ci === 4;
+      ctx.textAlign = right ? 'right' : 'left';
+      const clipped = v.length > 40 ? v.slice(0, 39) + '…' : v;
+      ctx.fillText(clipped, right ? hx + c.w - 4 : hx + 4, y + 19);
+      hx += c.w;
+    });
+    y += rowH;
+  });
+
+  ctx.fillStyle = '#98a1b3';
+  ctx.font = '11px -apple-system, Segoe UI, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(t('generatedBy'), pad, y + 18);
+  return canvas;
+}
+
+function exportSellersImage(fmt) {
+  if (sellersTab === 'categories') {
+    const catList = getCategorySellers(sellersPeriod);
+    if (catList.length === 0) { toast(t('nothingToExport'), 'error'); return; }
+    const mime = fmt === 'jpeg' ? 'image/jpeg' : 'image/png';
+    const canvas = renderReportCanvas(760, 2);
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL(mime, 0.92);
+    a.download = 'best-categories-' + (fmt === 'jpeg' ? 'jpg' : 'png');
+    document.body.appendChild(a); a.click(); a.remove();
+    toast(t('sellersExportedFmt', { fmt: fmt.toUpperCase() }));
+    return;
+  }
+  const list = getSellers(sellersPeriod);
+  if (list.length === 0) {
+    toast(t('nothingToExport'), 'error');
+    return;
+  }
+  const mime = fmt === 'jpeg' ? 'image/jpeg' : 'image/png';
+  const canvas = renderReportCanvas(760, 2);
+  const a = document.createElement('a');
+  a.href = canvas.toDataURL(mime, 0.92);
+  a.download = 'best-sellers-' + (fmt === 'jpeg' ? 'jpg' : 'png');
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast(t('sellersExportedFmt', { fmt: fmt.toUpperCase() }));
+}
+
+function exportSellersPdf() {
+  if (sellersTab === 'categories') {
+    const catList = getCategorySellers(sellersPeriod);
+    if (catList.length === 0) { toast(t('nothingToExport'), 'error'); return; }
+    const canvas = renderReportCanvas(760, 2);
+    const img = canvas.toDataURL('image/png');
+    const rowsHtml = catList.map((e, i) =>
+      `<tr><td>${i + 1}</td><td>${escapeHtml(e.category)}</td><td>${e.itemCount}</td><td>${e.qty.toLocaleString()}</td><td>${fmtCurrency(e.revenue)}</td></tr>`
+    ).join('');
+    $('#printArea').innerHTML = `<div class="print-report"><h1>${escapeHtml(t('catRank'))}</h1><p class="pr-sub">${escapeHtml(periodLabelFor(sellersPeriod))} · ${escapeHtml(t('exportedOn', { date: new Date().toLocaleString(uiLocale()) }))}</p><img src="${img}" alt="" /><table class="pr-table"><thead><tr><th>${escapeHtml(t('colRank'))}</th><th>${escapeHtml(t('categoryLabel'))}</th><th>Items</th><th>${escapeHtml(t('colUnitsSold'))}</th><th>${escapeHtml(t('colRevenue'))}</th></tr></thead><tbody>${rowsHtml}</tbody></table><p class="pr-foot">${escapeHtml(t('generatedBy'))}</p></div>`;
+    window.print(); toast(t('pdfDialogHint'));
+    return;
+  }
+  const list = getSellers(sellersPeriod);
+  if (list.length === 0) {
+    toast(t('nothingToExport'), 'error');
+    return;
+  }
+  const canvas = renderReportCanvas(760, 2);
+  const img = canvas.toDataURL('image/png');
+  const rowsHtml = list
+    .map((e, i) =>
+      `<tr><td>${i + 1}</td><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.sku || '—')}</td>` +
+      `<td>${e.qty.toLocaleString()}</td><td>${fmtCurrency(e.revenue)}</td></tr>`
+    )
+    .join('');
+  $('#printArea').innerHTML = `
+    <div class="print-report">
+      <h1>${escapeHtml(t('reportTitle'))}</h1>
+      <p class="pr-sub">${escapeHtml(periodLabelFor(sellersPeriod))} · ${escapeHtml(t('exportedOn', { date: new Date().toLocaleString(uiLocale()) }))}</p>
+      <img src="${img}" alt="${escapeHtml(t('revenueTrend'))}" />
+      <table class="pr-table">
+        <thead><tr><th>${escapeHtml(t('colRank'))}</th><th>${escapeHtml(t('colItem'))}</th><th>${escapeHtml(t('colSku'))}</th><th>${escapeHtml(t('colUnitsSold'))}</th><th>${escapeHtml(t('colRevenue'))}</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <p class="pr-foot">${escapeHtml(t('generatedBy'))}</p>
+    </div>`;
+  window.print();
+  toast(t('pdfDialogHint'));
+}
+
+/* ---------- Restock / reorder ---------- */
+
+const REORDER_KEY = 'freebuff.inventory.reorder.v1';
+const VELOCITY_WINDOW_DAYS = 30;
+
+let reorderCoverDays = loadReorderCoverDays();
+let restockingItemId = null;
+
+function loadReorderCoverDays() {
+  try {
+    const raw = localStorage.getItem(REORDER_KEY);
+    if (raw) {
+      const v = Number(JSON.parse(raw));
+      if (v > 0) return v;
+    }
+  } catch (e) { /* ignore */ }
+  return 30;
+}
+
+function saveReorderCoverDays() {
+  try {
+    localStorage.setItem(REORDER_KEY, JSON.stringify(reorderCoverDays));
+  } catch (e) { /* ignore */ }
+}
+
+// Units sold per day for an item: 30-day velocity, with a fallback for
+// items that are empty but sold before (so they still get a suggestion).
+function getSalesVelocity(item) {
+  const cutoff = Date.now() - VELOCITY_WINDOW_DAYS * 86400000;
+  let sold30 = 0, soldAll = 0, firstTs = Infinity;
+  for (const s of sales) {
+    const matches = (s.itemId && s.itemId === item.id) || (item.sku && s.sku === item.sku);
+    if (!matches) continue;
+    const q = Number(s.qty) || 0;
+    soldAll += q;
+    const ts = new Date(s.ts).getTime();
+    if (ts >= cutoff) sold30 += q;
+    if (ts < firstTs) firstTs = ts;
+  }
+  const velocity30 = sold30 / VELOCITY_WINDOW_DAYS;
+  const spanDays = firstTs === Infinity ? 0 : Math.max(1, (Date.now() - firstTs) / 86400000);
+  const velocityAll = spanDays > 0 ? soldAll / spanDays : 0;
+  const effective =
+    velocity30 > 0
+      ? velocity30
+      : (Number(item.quantity) || 0) <= 0 && soldAll > 0
+        ? Math.max(velocityAll, 0.05)
+        : 0;
+  return { velocity30, velocityAll, effective, sold30, soldAll };
+}
+
+function getReorderList() {
+  const cover = reorderCoverDays;
+  const rows = [];
+  for (const it of items) {
+    const v = getSalesVelocity(it);
+    if (v.effective <= 0) continue;
+    const stock = Number(it.quantity) || 0;
+    const reorderPoint = Math.max(1, Math.ceil(v.effective * cover));
+    if (stock >= reorderPoint) continue;
+    rows.push({
+      item: it,
+      stock,
+      velocity: v.effective,
+      sold30: v.sold30,
+      reorderPoint,
+      suggested: Math.max(1, reorderPoint - stock),
+      daysOfCover: stock / v.effective,
+    });
+  }
+  rows.sort((a, b) =>
+    (a.daysOfCover - b.daysOfCover) ||
+    (b.suggested - a.suggested) ||
+    a.item.name.localeCompare(b.item.name)
+  );
+  return rows;
+}
+
+function updateReorderControls() {
+  const n = getReorderList().length;
+  const count = $('#reorderCount');
+  if (!count) return;
+  count.hidden = n === 0;
+  count.textContent = n;
+  $('#reorderBtn').title = n > 0
+    ? t('reorderBtnTitleN', { n })
+    : t('reorderBtnTitle');
+}
+
+function renderReorder() {
+  const list = getReorderList();
+  const totalSuggested = list.reduce((s, r) => s + r.suggested, 0);
+  $('#reorderSummary').innerHTML = list.length
+    ? `<strong>${list.length}</strong> ${escapeHtml(t('restockNeed', { n: list.length }))} · ` +
+      `<strong>${totalSuggested.toLocaleString()}</strong> ${escapeHtml(t('restockUnits', { n: totalSuggested }))} · ` +
+      escapeHtml(t('restockBased', { days: VELOCITY_WINDOW_DAYS }))
+    : t('nothingNeedsReorder');
+
+  const el = $('#reorderList');
+  if (list.length === 0) {
+    el.innerHTML = `<div class="sellers-empty">${t('noReorderNow')}</div>`;
+    return;
+  }
+
+  el.innerHTML = list.map((r, i) => `
+    <div class="reorder-row">
+      <div class="seller-rank">${i + 1}</div>
+      <div class="seller-main">
+        <div class="seller-name">${escapeHtml(r.item.name)}</div>
+        <div class="seller-sku">${escapeHtml(r.item.sku || '')}</div>
+        <div class="reorder-meta">
+          <span>${escapeHtml(t('inStockShort', { n: r.stock.toLocaleString() }))}</span>
+          <span>${escapeHtml(t('perDay', { vel: r.velocity.toFixed(1) }))}</span>
+          <span>${escapeHtml(t('daysLeft', { n: r.daysOfCover === Infinity ? '∞' : r.daysOfCover.toFixed(1) }))}</span>
+          <span class="reorder-rop">${escapeHtml(t('reorderAt', { n: r.reorderPoint }))}</span>
+        </div>
+      </div>
+      <div class="reorder-nums">
+        <div class="reorder-suggested">${escapeHtml(t('orderN', { n: '' }))} <strong>${r.suggested.toLocaleString()}</strong></div>
+        <button class="btn btn-primary btn-sm" data-restock="${r.item.id}">${escapeHtml(t('restockBtn'))}</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openReorder() {
+  $('#reorderBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+  $('#reorderCover').value = reorderCoverDays;
+  renderReorder();
+}
+
+function closeReorder() {
+  $('#reorderBackdrop').hidden = true;
+  document.body.style.overflow = '';
+}
+
+function openRestockModal(item) {
+  if (!item) return;
+  restockingItemId = item.id;
+  $('#restockName').textContent = item.name;
+  $('#restockSku').textContent = item.sku ? t('skuPrefix', { sku: item.sku }) : '';
+  $('#restockStock').textContent = t('inStockShort', { n: (Number(item.quantity) || 0).toLocaleString() });
+  const suggested = getReorderList().find((r) => r.item.id === item.id);
+  const qtyInput = $('#restockQty');
+  qtyInput.value = suggested ? suggested.suggested : 1;
+  updateRestockAfter();
+  $('#restockBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+  qtyInput.focus();
+  qtyInput.select();
+}
+
+function closeRestockModal() {
+  $('#restockBackdrop').hidden = true;
+  document.body.style.overflow = '';
+  restockingItemId = null;
+}
+
+function updateRestockAfter() {
+  const item = items.find((it) => it.id === restockingItemId);
+  if (!item) return;
+  const qty = Math.floor(Number($('#restockQty').value) || 0);
+  $('#restockAfter').textContent = ((Number(item.quantity) || 0) + qty).toLocaleString();
+}
+
+function applyRestock(item, qty) {
+  const q = Math.floor(Number(qty)) || 0;
+  if (q <= 0) return false;
+  const before = Number(item.quantity) || 0;
+  item.quantity = before + q;
+  item.updatedAt = new Date().toISOString();
+  recordHistory({
+    type: 'quantity',
+    itemId: item.id,
+    itemName: item.name,
+    sku: item.sku,
+    delta: q,
+    qtyBefore: before,
+    qtyAfter: item.quantity,
+    detail: t('restockTag'),
+  });
+  saveItems();
+  return true;
+}
+
+function confirmRestock() {
+  const item = items.find((it) => it.id === restockingItemId);
+  if (!item) {
+    toast(t('itemGone'), 'error');
+    closeRestockModal();
+    return;
+  }
+  const qty = Math.floor(Number($('#restockQty').value) || 0);
+  if (qty <= 0) {
+    toast(t('enterQtyReceive'), 'error');
+    return;
+  }
+  if (applyRestock(item, qty)) {
+    closeRestockModal();
+    render();
+    toast(t('receivedToast', { n: qty.toLocaleString(), name: item.name }));
+  }
+}
+
+function restockAll() {
+  const list = getReorderList();
+  if (list.length === 0) {
+    toast(t('nothingToRestock'), 'error');
+    return;
+  }
+  const total = list.reduce((s, r) => s + r.suggested, 0);
+  if (!window.confirm(t('restockAllConfirm', { n: list.length, qty: total.toLocaleString() }))) return;
+  let done = 0;
+  for (const r of list) if (applyRestock(r.item, r.suggested)) done++;
+  closeReorder();
+  render();
+  toast(t('restockDoneToast', { n: done }));
+}
+
+/* ============================================================
+   QR Code encoder — byte mode, EC level L, versions 1-6.
+   Implements JIS X 0510 / ISO/IEC 18004 (finders, timing,
+   alignment, format info with BCH, 8 masks + penalty scoring,
+   Reed-Solomon error correction). No external dependencies.
+   ============================================================ */
+
+const Qr = (function () {
+  // GF(256) tables, primitive polynomial 0x11D
+  const EXP = new Uint8Array(512);
+  const LOG = new Uint8Array(256);
+  (function () {
+    let x = 1;
+    for (let i = 0; i < 255; i++) {
+      EXP[i] = x;
+      LOG[x] = i;
+      x <<= 1;
+      if (x & 0x100) x ^= 0x11d;
+    }
+    for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+  })();
+
+  function gfMul(a, b) {
+    if (a === 0 || b === 0) return 0;
+    return EXP[LOG[a] + LOG[b]];
+  }
+
+  // Spec tables for versions 1-6, EC level L: [ec codewords/block, data codewords/block[]]
+  const EC_PER_BLOCK = [7, 10, 15, 20, 26, 18];
+  const DATA_PER_BLOCK = [[19], [34], [55], [80], [108], [68, 68]];
+  const ALIGN_POS = [[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34]];
+
+  function rsGenPoly(deg) {
+    let poly = [1];
+    for (let i = 0; i < deg; i++) {
+      const next = new Array(poly.length + 1).fill(0);
+      for (let j = 0; j < poly.length; j++) {
+        next[j] ^= gfMul(poly[j], EXP[i]);
+        next[j + 1] ^= poly[j];
+      }
+      poly = next;
+    }
+    return poly;
+  }
+
+  function rsEncode(data, gen) {
+    // Synthetic division needs the generator highest-degree-first;
+    // gen is built ascending (index = degree), so reverse it.
+    const genRev = gen.slice().reverse();
+    const res = data.slice().concat(new Array(gen.length - 1).fill(0));
+    for (let i = 0; i < data.length; i++) {
+      const coef = res[i];
+      if (coef !== 0) {
+        for (let j = 0; j < genRev.length; j++) res[i + j] ^= gfMul(genRev[j], coef);
+      }
+    }
+    return res.slice(data.length);
+  }
+
+  // Format info: 2 EC bits + 3 mask bits, BCH(15,5) with G=0x537, XOR 0x5412
+  function formatBits(ecBits, mask) {
+    const data = ((ecBits << 3) | mask) & 0x1f;
+    let rem = data << 10;
+    for (let i = 14; i >= 10; i--) {
+      if ((rem >> i) & 1) rem ^= 0x537 << (i - 10);
+    }
+    return ((data << 10) | (rem & 0x3ff)) ^ 0x5412;
+  }
+
+  const MASK_FNS = [
+    (r, c) => (r + c) % 2 === 0,
+    (r) => r % 2 === 0,
+    (r, c) => c % 3 === 0,
+    (r, c) => (r + c) % 3 === 0,
+    (r, c) => (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0,
+    (r, c) => ((r * c) % 2) + ((r * c) % 3) === 0,
+    (r, c) => (((r * c) % 2) + ((r * c) % 3)) % 2 === 0,
+    (r, c) => (((r + c) % 2) + ((r * c) % 3)) % 2 === 0,
+  ];
+
+  const N3_PATTERNS = [
+    [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1],
+  ];
+
+  function maskBit(mask, r, c) {
+    return MASK_FNS[mask](r, c) ? 1 : 0;
+  }
+
+  function penalty(matrix) {
+    const size = matrix.length;
+    let score = 0;
+
+    // N1: runs of >= 5 same-color modules (rows + columns)
+    function runs(line) {
+      let s = 0, run = 1;
+      for (let i = 1; i < line.length; i++) {
+        if (line[i] === line[i - 1]) {
+          run++;
+          if (run === 5) s += 3;
+          else if (run > 5) s += 1;
+        } else run = 1;
+      }
+      return s;
+    }
+    for (let r = 0; r < size; r++) score += runs(matrix[r]);
+    for (let c = 0; c < size; c++) {
+      const col = new Array(size);
+      for (let r = 0; r < size; r++) col[r] = matrix[r][c];
+      score += runs(col);
+    }
+
+    // N2: 2x2 blocks of the same color
+    for (let r = 0; r < size - 1; r++) {
+      for (let c = 0; c < size - 1; c++) {
+        const v = matrix[r][c];
+        if (v === matrix[r][c + 1] && v === matrix[r + 1][c] && v === matrix[r + 1][c + 1]) score += 3;
+      }
+    }
+
+    // N3: finder-like patterns (rows + columns)
+    function finderLike(line) {
+      let s = 0;
+      for (let i = 0; i + 11 <= line.length; i++) {
+        for (const pat of N3_PATTERNS) {
+          let match = true;
+          for (let k = 0; k < 11; k++) {
+            if (line[i + k] !== pat[k]) { match = false; break; }
+          }
+          if (match) { s += 40; break; }
+        }
+      }
+      return s;
+    }
+    for (let r = 0; r < size; r++) score += finderLike(matrix[r]);
+    for (let c = 0; c < size; c++) {
+      const col = new Array(size);
+      for (let r = 0; r < size; r++) col[r] = matrix[r][c];
+      score += finderLike(col);
+    }
+
+    // N4: dark module proportion
+    let dark = 0;
+    for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) dark += matrix[r][c];
+    score += Math.floor(Math.abs((dark * 100) / (size * size) - 50) / 5) * 10;
+
+    return score;
+  }
+
+  function pickVersion(len) {
+    for (let v = 1; v <= 6; v++) {
+      const data = DATA_PER_BLOCK[v - 1].reduce((a, b) => a + b, 0);
+      if (data * 8 >= 12 + 8 * len) return v;
+    }
+    return null;
+  }
+
+  function encode(text) {
+    const bytes = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xff;
+
+    const version = pickVersion(bytes.length);
+    if (!version) return { error: 'too long' };
+
+    const size = 17 + 4 * version;
+    const dataPerBlock = DATA_PER_BLOCK[version - 1];
+    const totalData = dataPerBlock.reduce((a, b) => a + b, 0);
+    const ecPerBlock = EC_PER_BLOCK[version - 1];
+
+    // --- Bit stream: mode(0100) + count(8) + bytes + terminator + pad ---
+    const bits = [];
+    function pushBits(value, count) {
+      for (let i = count - 1; i >= 0; i--) bits.push((value >> i) & 1);
+    }
+    pushBits(4, 4);
+    pushBits(bytes.length, 8);
+    for (let i = 0; i < bytes.length; i++) pushBits(bytes[i], 8);
+    pushBits(0, Math.min(4, totalData * 8 - bits.length));
+    while (bits.length % 8 !== 0) bits.push(0);
+    const padBytes = [0xec, 0x11];
+    let pi = 0;
+    while (bits.length < totalData * 8) {
+      pushBits(padBytes[pi], 8);
+      pi = 1 - pi;
+    }
+
+    const codewords = [];
+    for (let i = 0; i < bits.length; i += 8) {
+      let b = 0;
+      for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+      codewords.push(b);
+    }
+
+    // --- Reed-Solomon per block, then interleave ---
+    const gen = rsGenPoly(ecPerBlock);
+    const blocks = [];
+    let pos = 0;
+    for (const len of dataPerBlock) {
+      const blk = codewords.slice(pos, pos + len);
+      blocks.push({ data: blk, ec: rsEncode(blk, gen) });
+      pos += len;
+    }
+    // Final message: data codewords interleaved across blocks, then each
+    // block's EC codewords appended as a contiguous group (per the spec).
+    const final = [];
+    const maxData = Math.max(...dataPerBlock);
+    for (let i = 0; i < maxData; i++) for (const blk of blocks) if (i < blk.data.length) final.push(blk.data[i]);
+    for (const blk of blocks) for (const e of blk.ec) final.push(e);
+
+    // --- Matrix with function patterns ---
+    const fn = Array.from({ length: size }, () => new Uint8Array(size));
+
+    function placeFinder(r0, c0) {
+      for (let r = -1; r <= 7; r++) {
+        for (let c = -1; c <= 7; c++) {
+          const rr = r0 + r, cc = c0 + c;
+          if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
+          fn[rr][cc] = 1;
+          if (r >= 0 && r <= 6 && c >= 0 && c <= 6 &&
+              (r === 0 || r === 6 || c === 0 || c === 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4))) {
+            fn[rr][cc] = 2; // dark function module
+          }
+        }
+      }
+    }
+    placeFinder(0, 0);
+    placeFinder(0, size - 7);
+    placeFinder(size - 7, 0);
+
+    // Timing patterns
+    for (let i = 8; i < size - 8; i++) {
+      fn[6][i] = 1 + (i % 2 === 0 ? 1 : 0);
+      fn[i][6] = 1 + (i % 2 === 0 ? 1 : 0);
+    }
+
+    // Alignment patterns
+    const positions = ALIGN_POS[version - 1];
+    for (const pr of positions) {
+      for (const pc of positions) {
+        if ((pr === 6 && pc === 6) || (pr === 6 && pc === size - 7) || (pr === size - 7 && pc === 6)) continue;
+        for (let r = -2; r <= 2; r++) {
+          for (let c = -2; c <= 2; c++) {
+            fn[pr + r][pc + c] = 1 + (Math.max(Math.abs(r), Math.abs(c)) !== 1 ? 1 : 0);
+          }
+        }
+      }
+    }
+
+    // Dark module
+    fn[size - 8][8] = 2;
+
+    // Format areas (both copies)
+    for (let i = 0; i <= 8; i++) {
+      if (i !== 6) { fn[8][i] = 1; fn[i][8] = 1; }
+    }
+    for (let i = size - 8; i < size; i++) { fn[8][i] = 1; fn[i][8] = 1; }
+
+    // --- Try all 8 masks, keep the lowest penalty ---
+    const COPY1_ROWS = [7, 5, 4, 3, 2, 1, 0];
+    const allBits = [];
+    for (const byte of final) {
+      for (let b = 7; b >= 0; b--) allBits.push((byte >> b) & 1);
+    }
+    let best = null;
+    let bestScore = Infinity;
+
+    for (let mask = 0; mask < 8; mask++) {
+      const mm = Array.from({ length: size }, (_, r) => Uint8Array.from(fn[r], (v) => (v === 2 ? 1 : 0)));
+
+      // Data placement (zigzag, skipping function modules)
+      let bitIdx = 0;
+      let dir = -1;
+      let row = size - 1;
+      let col = size - 1;
+      while (col >= 1) {
+        if (col === 6) col = 5;
+        while (true) {
+          for (let c = 0; c < 2; c++) {
+            const cc = col - c;
+            if (!fn[row][cc]) {
+              const bit = bitIdx < allBits.length ? allBits[bitIdx] : 0;
+              mm[row][cc] = maskBit(mask, row, cc) ? bit ^ 1 : bit;
+              bitIdx++;
+            }
+          }
+          row += dir;
+          if (row < 0 || row >= size) {
+            row -= dir;
+            dir = -dir;
+            col -= 2;
+            break;
+          }
+        }
+      }
+
+      // Format info (EC level L = 01)
+      const fmt = formatBits(1, mask);
+      for (let i = 0; i < 15; i++) {
+        const b = (fmt >> (14 - i)) & 1;
+        if (i < 6) mm[8][i] = b;
+        else if (i < 7) mm[8][7] = b;
+        else if (i < 8) mm[8][8] = b;
+        else mm[COPY1_ROWS[i - 8]][8] = b;
+        if (i < 7) mm[size - 1 - i][8] = b;
+        else mm[8][size - 15 + i] = b;
+      }
+
+      const score = penalty(mm);
+      if (score < bestScore) {
+        bestScore = score;
+        best = mm;
+      }
+    }
+
+    return { size, matrix: best, version, final, fn, ecPerBlock, dataPerBlock };
+  }
+
+  return { encode };
+})();
+
+function renderQrSvg(text) {
+  const qr = Qr.encode(text);
+  if (qr.error) return '';
+  const n = qr.size;
+  const qz = 2; // quiet zone in modules
+  const cell = 6;
+  const dim = (n + qz * 2) * cell;
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" width="${dim}" height="${dim}" shape-rendering="crispEdges" role="img" aria-label="QR code">`;
+  s += `<rect width="${dim}" height="${dim}" fill="#ffffff"/>`;
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (qr.matrix[r][c]) s += `<rect x="${(c + qz) * cell}" y="${(r + qz) * cell}" width="${cell}" height="${cell}"/>`;
+    }
+  }
+  s += '</svg>';
+  return s;
+}
+
+/* ============================================================
+   QR Code decoder — reads back the codes this app generates
+   (byte mode, EC level L, versions 1-6). Used as a fallback
+   when the browser lacks the native BarcodeDetector API.
+   Pipeline: grayscale → Otsu threshold → finder detection →
+   affine module sampling → format read → unmask → zigzag read
+   → Reed-Solomon syndrome check + Berlekamp-Massey correction.
+   ============================================================ */
+
+const QrDecode = (function () {
+  const EXP = new Uint8Array(512);
+  const LOG = new Uint8Array(256);
+  (function () {
+    let x = 1;
+    for (let i = 0; i < 255; i++) {
+      EXP[i] = x;
+      LOG[x] = i;
+      x <<= 1;
+      if (x & 0x100) x ^= 0x11d;
+    }
+    for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+  })();
+  const gfMul = (a, b) => (a === 0 || b === 0) ? 0 : EXP[LOG[a] + LOG[b]];
+  const gfInv = (a) => EXP[(255 - LOG[a]) % 255];
+
+  const EC_PER_BLOCK = [7, 10, 15, 20, 26, 18];
+  const DATA_PER_BLOCK = [[19], [34], [55], [80], [108], [68, 68]];
+  const ALIGN_POS = [[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34]];
+
+  function otsu(gray) {
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
+    const total = gray.length;
+    let sum = 0;
+    for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sumB = 0, wB = 0, maxVar = -1, threshold = 127;
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (wB === 0) continue;
+      const wF = total - wB;
+      if (wF === 0) break;
+      sumB += t * hist[t];
+      const mB = sumB / wB;
+      const mF = (sum - sumB) / wF;
+      const between = wB * wF * (mB - mF) * (mB - mF);
+      if (between > maxVar) { maxVar = between; threshold = t; }
+    }
+    return threshold;
+  }
+
+  function foundPatternCross(st) {
+    let total = 0;
+    for (let i = 0; i < 5; i++) {
+      if (st[i] === 0) return false;
+      total += st[i];
+    }
+    if (total < 7) return false;
+    const ms = total / 7;
+    const maxVar = ms / 2;
+    return Math.abs(ms - st[0]) < maxVar &&
+           Math.abs(ms - st[1]) < maxVar &&
+           Math.abs(3 * ms - st[2]) < 3 * maxVar &&
+           Math.abs(ms - st[3]) < maxVar &&
+           Math.abs(ms - st[4]) < maxVar;
+  }
+
+  // Scan a 1-D line for 1:1:3:1:1 finder-pattern runs. Uses ZXing's state
+  // machine: a failed pattern shifts the run counts back by two instead of
+  // restarting, so data modules directly above a finder can't mask it.
+  function scanLine(len, get) {
+    const cands = [];
+    const st = [0, 0, 0, 0, 0];
+    let state = 0;
+    for (let j = 0; j < len; j++) {
+      const bit = get(j);
+      if (bit === 1) {          // black pixel
+        if ((state & 1) === 1) state++;   // a white run just ended
+        st[state]++;
+      } else {                  // white pixel
+        if ((state & 1) === 0) {          // a black run just ended
+          if (state === 4) {
+            if (foundPatternCross(st)) {
+              const total = st[0] + st[1] + st[2] + st[3] + st[4];
+              cands.push({ center: (j - st[4] - st[3]) - st[2] / 2, ms: total / 7 });
+              state = 0;
+              st.fill(0);
+            } else {
+              // Shift counts back by two runs and retry from here.
+              st[0] = st[2]; st[1] = st[3]; st[2] = st[4];
+              st[3] = 1; st[4] = 0;
+              state = 3;
+            }
+          } else {
+            st[++state]++;
+          }
+        } else {
+          st[state]++;
+        }
+      }
+    }
+    if (state === 4 && foundPatternCross(st)) {
+      const total = st[0] + st[1] + st[2] + st[3] + st[4];
+      cands.push({ center: (len - st[4] - st[3]) - st[2] / 2, ms: total / 7 });
+    }
+    return cands;
+  }
+
+  function findFinders(binary, w, h) {
+    const hCand = [], vCand = [];
+    for (let y = 0; y < h; y++) {
+      for (const c of scanLine(w, (i) => binary[y * w + i])) hCand.push({ x: c.center, y, ms: c.ms });
+    }
+    for (let x = 0; x < w; x++) {
+      for (const c of scanLine(h, (i) => binary[i * w + x])) vCand.push({ x, y: c.center, ms: c.ms });
+    }
+
+    // Crossings: a horizontal pattern run gives a precise column center, a
+    // vertical pattern run gives a precise row center. Where they meet is the
+    // finder center (ZXing-style).
+    const crossings = [];
+    for (const hc of hCand) {
+      for (const vc of vCand) {
+        const tol = Math.max(hc.ms, vc.ms) * 0.7;
+        if (Math.abs(vc.x - hc.x) <= tol && Math.abs(vc.y - hc.y) <= tol) {
+          crossings.push({ x: hc.x, y: vc.y, size: (hc.ms + vc.ms) / 2 });
+          break;
+        }
+      }
+    }
+    if (crossings.length < 3) return null;
+
+    const used = new Array(crossings.length).fill(false);
+    const clusters = [];
+    for (let i = 0; i < crossings.length; i++) {
+      if (used[i]) continue;
+      const cluster = [crossings[i]];
+      used[i] = true;
+      for (let j = i + 1; j < crossings.length; j++) {
+        if (!used[j] && Math.hypot(crossings[j].x - crossings[i].x, crossings[j].y - crossings[i].y) <= crossings[i].size * 2) {
+          cluster.push(crossings[j]);
+          used[j] = true;
+        }
+      }
+      clusters.push(cluster);
+    }
+    if (clusters.length < 3) return null;
+
+    const centers = clusters
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 3)
+      .map((cl) => ({
+        x: cl.reduce((s, p) => s + p.x, 0) / cl.length,
+        y: cl.reduce((s, p) => s + p.y, 0) / cl.length,
+        size: cl.reduce((s, p) => s + p.size, 0) / cl.length,
+      }));
+
+    // ZXing-style ordering: pointB is the corner opposite the longest edge
+    // (the hypotenuse between TR and BL), so pointB is TL; a cross-product
+    // sign check then disambiguates TR from BL.
+    const d01 = Math.hypot(centers[0].x - centers[1].x, centers[0].y - centers[1].y);
+    const d12 = Math.hypot(centers[1].x - centers[2].x, centers[1].y - centers[2].y);
+    const d02 = Math.hypot(centers[0].x - centers[2].x, centers[0].y - centers[2].y);
+    let pointA, pointB, pointC;
+    if (d12 >= d01 && d12 >= d02) { pointB = centers[0]; pointA = centers[1]; pointC = centers[2]; }
+    else if (d02 >= d12 && d02 >= d01) { pointB = centers[1]; pointA = centers[0]; pointC = centers[2]; }
+    else { pointB = centers[2]; pointA = centers[0]; pointC = centers[1]; }
+    if ((pointB.x - pointA.x) * (pointC.y - pointA.y) - (pointB.y - pointA.y) * (pointC.x - pointA.x) < 0) {
+      const tmp = pointA; pointA = pointC; pointC = tmp;
+    }
+    // ZXing result order is [bottomLeft, topLeft, topRight].
+    return [pointB, pointC, pointA];
+  }
+
+  // Function-module map (0 = data, 1 = light, 2 = dark), mirrors the encoder.
+  function buildFnMap(size, version) {
+    const fn = Array.from({ length: size }, () => new Uint8Array(size));
+    function placeFinder(r0, c0) {
+      for (let r = -1; r <= 7; r++) {
+        for (let c = -1; c <= 7; c++) {
+          const rr = r0 + r, cc = c0 + c;
+          if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
+          fn[rr][cc] = 1;
+          if (r >= 0 && r <= 6 && c >= 0 && c <= 6 &&
+              (r === 0 || r === 6 || c === 0 || c === 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4))) {
+            fn[rr][cc] = 2;
+          }
+        }
+      }
+    }
+    placeFinder(0, 0);
+    placeFinder(0, size - 7);
+    placeFinder(size - 7, 0);
+    for (let i = 8; i < size - 8; i++) {
+      fn[6][i] = 1 + (i % 2 === 0 ? 1 : 0);
+      fn[i][6] = 1 + (i % 2 === 0 ? 1 : 0);
+    }
+    const positions = ALIGN_POS[version - 1];
+    for (const pr of positions) {
+      for (const pc of positions) {
+        if ((pr === 6 && pc === 6) || (pr === 6 && pc === size - 7) || (pr === size - 7 && pc === 6)) continue;
+        for (let r = -2; r <= 2; r++) {
+          for (let c = -2; c <= 2; c++) {
+            fn[pr + r][pc + c] = 1 + (Math.max(Math.abs(r), Math.abs(c)) !== 1 ? 1 : 0);
+          }
+        }
+      }
+    }
+    fn[size - 8][8] = 2;
+    for (let i = 0; i <= 8; i++) {
+      if (i !== 6) { fn[8][i] = 1; fn[i][8] = 1; }
+    }
+    for (let i = size - 8; i < size; i++) { fn[8][i] = 1; fn[i][8] = 1; }
+    return fn;
+  }
+
+  function isValidFormat(fmt) {
+    const data = (fmt ^ 0x5412) >> 10;
+    const rem = (fmt ^ 0x5412) & 0x3ff;
+    let v = data << 10;
+    for (let i = 14; i >= 10; i--) {
+      if ((v >> i) & 1) v ^= 0x537 << (i - 10);
+    }
+    return (v & 0x3ff) === rem;
+  }
+
+  function readFormat(mod) {
+    const size = mod.length;
+    const copy1 = [];
+    for (let i = 0; i < 6; i++) copy1.push(mod[8][i]);
+    copy1.push(mod[8][7], mod[8][8]);
+    for (const r of [7, 5, 4, 3, 2, 1, 0]) copy1.push(mod[r][8]);
+    const copy2 = [];
+    for (let i = 0; i < 7; i++) copy2.push(mod[size - 1 - i][8]);
+    for (let i = 7; i < 15; i++) copy2.push(mod[8][size - 15 + i]);
+    const v1 = parseInt(copy1.join(''), 2);
+    const v2 = parseInt(copy2.join(''), 2);
+    const fmt = v1 === v2 ? v1 : (isValidFormat(v1) ? v1 : (isValidFormat(v2) ? v2 : null));
+    if (fmt == null) throw new Error('format');
+    const data = (fmt ^ 0x5412) >> 10;
+    return { mask: data & 7, ec: data >> 3 };
+  }
+
+  const MASK_FNS = [
+    (r, c) => (r + c) % 2 === 0,
+    (r) => r % 2 === 0,
+    (r, c) => c % 3 === 0,
+    (r, c) => (r + c) % 3 === 0,
+    (r, c) => (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0,
+    (r, c) => ((r * c) % 2) + ((r * c) % 3) === 0,
+    (r, c) => (((r * c) % 2) + ((r * c) % 3)) % 2 === 0,
+    (r, c) => (((r + c) % 2) + ((r * c) % 3)) % 2 === 0,
+  ];
+
+  function sampleModules(binary, w, h, finders, n) {
+    const [tl, tr, bl] = finders;
+    const vx = { x: (tr.x - tl.x) / (n - 7), y: (tr.y - tl.y) / (n - 7) };
+    const vy = { x: (bl.x - tl.x) / (n - 7), y: (bl.y - tl.y) / (n - 7) };
+    const mod = [];
+    for (let r = 0; r < n; r++) {
+      const row = [];
+      for (let c = 0; c < n; c++) {
+        const u = c - 3, v = r - 3;   // offset in modules from the TL finder center (module 3,3)
+        const px = tl.x + u * vx.x + v * vy.x;
+        const py = tl.y + u * vx.y + v * vy.y;
+        const xi = Math.round(px), yi = Math.round(py);
+        row.push(xi >= 0 && xi < w && yi >= 0 && yi < h ? binary[yi * w + xi] : 0);
+      }
+      mod.push(row);
+    }
+    return mod;
+  }
+
+  function readCodewords(mod, fn, mask) {
+    const size = mod.length;
+    const bits = [];
+    let dir = -1, row = size - 1, col = size - 1;
+    while (col >= 1) {
+      if (col === 6) col = 5;
+      while (true) {
+        for (let c = 0; c < 2; c++) {
+          const cc = col - c;
+          if (!fn[row][cc]) {
+            const bit = mod[row][cc];
+            bits.push(MASK_FNS[mask](row, cc) ? bit ^ 1 : bit);
+          }
+        }
+        row += dir;
+        if (row < 0 || row >= size) {
+          row -= dir;
+          dir = -dir;
+          col -= 2;
+          break;
+        }
+      }
+    }
+    const bytes = [];
+    for (let i = 0; i + 8 <= bits.length; i += 8) {
+      let b = 0;
+      for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+      bytes.push(b);
+    }
+    return bytes;
+  }
+
+  // Reed-Solomon: syndrome check + Berlekamp-Massey + Forney correction.
+  function rsCorrect(data, ec, t) {
+    const n = data.length + ec.length;
+    const syndrome = (i) => {
+      let s = 0;
+      const root = EXP[i];
+      for (let j = 0; j < n; j++) {
+        const coef = j < data.length ? data[j] : ec[j - data.length];
+        s = gfMul(s, root) ^ coef;
+      }
+      return s;
+    };
+
+    const S = [];
+    let hasError = false;
+    for (let i = 0; i < t; i++) {
+      S.push(syndrome(i));
+      if (S[i] !== 0) hasError = true;
+    }
+    const codeword = [...data, ...ec];
+    if (hasError) {
+      // Berlekamp-Massey
+      let C = [1], B = [1], L = 0, m = 1, b = 1;
+      for (let k = 0; k < t; k++) {
+        let d = S[k];
+        for (let j = 1; j <= L; j++) d ^= gfMul(C[j] || 0, S[k - j]);
+        if (d === 0) {
+          m++;
+        } else {
+          const T = C.slice();
+          const coef = gfMul(d, gfInv(b));
+          for (let j = 0; j < B.length; j++) C[j + m] = (C[j + m] || 0) ^ gfMul(coef, B[j]);
+          if (2 * L <= k) { L = k + 1 - L; B = T; b = d; m = 1; }
+          else m++;
+        }
+      }
+      C = C.slice(0, L + 1);
+      if (L === 0 || L > Math.floor(t / 2)) throw new Error('uncorrectable');
+
+      // Chien search: roots at alpha^-i
+      const positions = [];
+      for (let i = 0; i < n; i++) {
+        const xi = EXP[(255 - (i % 255)) % 255];
+        let val = 0;
+        for (let j = C.length - 1; j >= 0; j--) val = gfMul(val, xi) ^ C[j];
+        if (val === 0) positions.push(i);
+      }
+      if (positions.length !== L) throw new Error('roots');
+
+      // Error evaluator Omega = S * C mod x^t
+      const omega = new Array(t).fill(0);
+      for (let i = 0; i < t; i++) {
+        for (let j = 0; j < C.length && i + j < t; j++) {
+          omega[i + j] ^= gfMul(S[i], C[j]);
+        }
+      }
+      const evalPoly = (poly, xi) => {
+        let val = 0;
+        for (let j = poly.length - 1; j >= 0; j--) val = gfMul(val, xi) ^ poly[j];
+        return val;
+      };
+      // Formal derivative of C (degree L-1, zero coefficients kept)
+      const dC = new Array(L).fill(0);
+      for (let j = 1; j <= L; j++) {
+        if (j % 2 === 1) dC[j - 1] = C[j];
+      }
+
+      for (const i of positions) {
+        const xi = EXP[(255 - (i % 255)) % 255]; // X^-1 = alpha^-i
+        const X = EXP[i % 255];                  // locator number alpha^i
+        const num = gfMul(evalPoly(omega, xi), X);
+        const den = evalPoly(dC, xi);
+        if (den === 0) throw new Error('den');
+        codeword[n - 1 - i] ^= gfMul(num, gfInv(den));
+      }
+
+      // Verify correction
+      for (let i = 0; i < t; i++) {
+        let s = 0;
+        const root = EXP[i];
+        for (let j = 0; j < n; j++) s = gfMul(s, root) ^ codeword[j];
+        if (s !== 0) throw new Error('verify');
+      }
+    }
+    return codeword.slice(0, data.length);
+  }
+
+  function decodePayload(dataCodewords) {
+    const bits = [];
+    for (const byte of dataCodewords) {
+      for (let b = 7; b >= 0; b--) bits.push((byte >> b) & 1);
+    }
+    let pos = 0;
+    const read = (count) => {
+      let v = 0;
+      for (let i = 0; i < count; i++) v = (v << 1) | bits[pos++];
+      return v;
+    };
+    const mode = read(4);
+    if (mode !== 4) throw new Error('mode');
+    const len = read(8);
+    let out = '';
+    for (let i = 0; i < len; i++) out += String.fromCharCode(read(8));
+    return out;
+  }
+
+  function decode(imageData) {
+    const w = imageData.width, h = imageData.height;
+    const d = imageData.data;
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const o = i * 4;
+      gray[i] = (d[o] * 77 + d[o + 1] * 150 + d[o + 2] * 29) >> 8;
+    }
+    const th = otsu(gray);
+    const binary = new Uint8Array(w * h);
+    // Otsu class 1 = pixels <= threshold (handles the degenerate case where
+    // a crisp black/white image yields threshold 0)
+    for (let i = 0; i < gray.length; i++) binary[i] = gray[i] <= th ? 1 : 0;
+
+    const finders = findFinders(binary, w, h);
+    if (!finders) throw new Error('finders');
+    const [tl, tr, bl] = finders;
+    const dTR = Math.hypot(tr.x - tl.x, tr.y - tl.y);
+    const dBL = Math.hypot(bl.x - tl.x, bl.y - tl.y);
+    const msAvg = (tl.size + tr.size + bl.size) / 3;
+    let n = Math.round((dTR + dBL) / 2 / msAvg) + 7;
+    const valid = [21, 25, 29, 33, 37, 41];
+    n = valid.reduce((best, v) => Math.abs(v - n) < Math.abs(best - n) ? v : best, valid[0]);
+    const version = (n - 17) / 4;
+
+    const mod = sampleModules(binary, w, h, [tl, tr, bl], n);
+    const { mask } = readFormat(mod);
+    const fn = buildFnMap(n, version);
+    const bytes = readCodewords(mod, fn, mask);
+
+    const dataPerBlock = DATA_PER_BLOCK[version - 1];
+    const ecPerBlock = EC_PER_BLOCK[version - 1];
+    const blocks = dataPerBlock.length;
+    const expected = dataPerBlock.reduce((a, b) => a + b, 0) + blocks * ecPerBlock;
+    if (bytes.length !== expected) throw new Error('length');
+
+    const blockData = [], blockEc = [];
+    for (let b = 0; b < blocks; b++) { blockData.push([]); blockEc.push([]); }
+    let p = 0;
+    const maxData = Math.max(...dataPerBlock);
+    for (let i = 0; i < maxData; i++) for (let b = 0; b < blocks; b++) if (i < dataPerBlock[b]) blockData[b].push(bytes[p++]);
+    for (let b = 0; b < blocks; b++) for (let i = 0; i < ecPerBlock; i++) blockEc[b].push(bytes[p++]);
+
+    const payload = [];
+    for (let b = 0; b < blocks; b++) payload.push(...rsCorrect(blockData[b], blockEc[b], ecPerBlock));
+    return decodePayload(payload);
+  }
+
+  return {
+    decode,
+    _test: { rsCorrect, otsu, scanLine, findFinders, buildFnMap, sampleModules, readFormat, readCodewords, decodePayload, EXP, LOG, gfMul, gfInv, EC_PER_BLOCK, DATA_PER_BLOCK },
+  };
+})();
+
+/* ---------- Camera scanner ---------- */
+
+let scanStream = null;
+let scanTimer = null;
+let scanBusy = false;
+let scanDetector = null;
+let scannedItemId = null;
+let lastScanned = '';
+let lastScannedAt = 0;
+let scanPaused = false;
+
+function supportsBarcodeDetector() {
+  return typeof window.BarcodeDetector === 'function';
+}
+
+function setScanStatus(text, cls = '') {
+  const el = $('#scanStatus');
+  el.hidden = false;
+  el.textContent = text;
+  el.className = 'scan-status' + (cls ? ' ' + cls : '');
+}
+
+let scanCanvas = null;
+
+function decodeFrame(video) {
+  if (!scanCanvas) {
+    scanCanvas = document.createElement('canvas');
+    scanCanvas.width = 480;
+    scanCanvas.height = 360;
+  }
+  const ctx = scanCanvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0, 480, 360);
+  try {
+    return QrDecode.decode(ctx.getImageData(0, 0, 480, 360));
+  } catch {
+    return null;
+  }
+}
+
+function resetScanUi() {
+  lastScanned = '';
+  lastScannedAt = 0;
+  scannedItemId = null;
+  scanPaused = false;
+  closeScanAdjust();
+  $('#scanResult').hidden = true;
+  $('#scanAgainBtn').hidden = true;
+  setScanStatus(t('startingCamera'));
+}
+
+async function openScanner() {
+  $('#scanBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+  resetScanUi();
+
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+      audio: false,
+    });
+    const video = $('#scanVideo');
+    video.srcObject = scanStream;
+    await video.play();
+
+    scanDetector = null;
+    if (supportsBarcodeDetector()) {
+      try {
+        const formats = await window.BarcodeDetector.getSupportedFormats().catch(() => []);
+        if (formats.includes('qr_code')) scanDetector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      } catch {
+        scanDetector = null;
+      }
+    }
+    setScanStatus(scanDetector
+      ? t('pointCamera')
+      : t('builtinDecoder'));
+    startScanLoop();
+  } catch (err) {
+    const reason = err && err.name === 'NotAllowedError'
+      ? t('cameraDenied')
+      : (err && err.message ? err.message : t('cameraCouldNotStart'));
+    setScanStatus(t('cameraUnavailable', { reason }), 'error');
+  }
+}
+
+function stopScanLoop() {
+  if (scanTimer) {
+    clearTimeout(scanTimer);
+    scanTimer = null;
+  }
+  scanBusy = false;
+}
+
+function startScanLoop() {
+  stopScanLoop();
+  const tick = async () => {
+    if (scanPaused) return;
+    const video = $('#scanVideo');
+    if (video.readyState >= 2 && !scanBusy) {
+      scanBusy = true;
+      try {
+        let code = null;
+        if (scanDetector) {
+          const codes = await scanDetector.detect(video);
+          if (codes.length > 0) code = String(codes[0].rawValue).trim();
+        } else {
+          code = decodeFrame(video);
+        }
+        if (!scanPaused && code) handleScanCode(code);
+      } catch {
+        /* transient detection errors are ignored */
+      }
+      scanBusy = false;
+    }
+    if (!scanPaused) scanTimer = setTimeout(tick, 120);
+  };
+  scanTimer = setTimeout(tick, 120);
+}
+
+function handleScanCode(code) {
+  const now = Date.now();
+  if (code && code === lastScanned && now - lastScannedAt < 1500) return;
+  lastScanned = code;
+  lastScannedAt = now;
+  const item = items.find(
+    (it) => (it.sku && it.sku.toLowerCase() === code.toLowerCase()) || it.id === code
+  );
+  if (!item) {
+    setScanStatus(t('codeNoMatch', { code }), 'error');
+    return;
+  }
+  showScanResult(item);
+}
+
+function showScanResult(item) {
+  scanPaused = true;
+  scannedItemId = item.id;
+  closeScanAdjust();
+  $('#scanCodeInput').value = '';
+  $('#scanResult').hidden = false;
+  $('#scanResultName').textContent = item.name;
+  $('#scanResultSku').textContent = item.sku ? t('skuPrefix', { sku: item.sku }) : (item.location ? item.location : '');
+  $('#scanAgainBtn').hidden = false;
+  $('#scanStatus').hidden = true;
+  renderScanQty(item);
+}
+
+function renderScanQty(item) {
+  const qty = Number(item.quantity) || 0;
+  $('#scanQtyValue').textContent = qty.toLocaleString();
+  $('#scanDecBtn').disabled = qty <= 0;
+  $('#scanRemoveBtn').disabled = qty <= 0;
+}
+
+let scanAdjustMode = null; // 'add' | 'remove' | null
+let scanAdjustBase = 0;
+
+function openScanAdjust(mode) {
+  const item = items.find((it) => it.id === scannedItemId);
+  if (!item) return;
+  scanAdjustMode = mode;
+  scanAdjustBase = Number(item.quantity) || 0;
+  $('#scanAdjustPanel').hidden = false;
+  $('#scanAdjustTitle').textContent = t(mode === 'add' ? 'scanAdjustAddTitle' : 'scanAdjustRemoveTitle');
+  $('#scanAdjustConfirm').textContent = t(mode === 'add' ? 'scanAdjustConfirmAdd' : 'scanAdjustConfirmRemove');
+  const qty = $('#scanAdjustQty');
+  qty.value = 1;
+  updateScanAdjustPreview();
+  qty.focus();
+  qty.select();
+}
+
+function closeScanAdjust() {
+  scanAdjustMode = null;
+  $('#scanAdjustPanel').hidden = true;
+}
+
+function updateScanAdjustPreview() {
+  if (!scanAdjustMode) return;
+  const qty = Math.max(1, Number($('#scanAdjustQty').value) || 0);
+  let next = scanAdjustMode === 'add' ? scanAdjustBase + qty : scanAdjustBase - qty;
+  const clamped = next < 0;
+  next = Math.max(0, next);
+  const preview = $('#scanAdjustPreview');
+  if (clamped) {
+    preview.textContent = t('scanRemoveExceeds', { n: scanAdjustBase.toLocaleString() });
+    preview.className = 'scan-adjust-preview warn';
+  } else {
+    preview.innerHTML = t('scanNewStock') + '<span class="new-total">' + next.toLocaleString() + '</span>';
+    preview.className = 'scan-adjust-preview';
+  }
+  $('#scanAdjustConfirm').disabled = clamped;
+}
+
+function confirmScanAdjust() {
+  const item = items.find((it) => it.id === scannedItemId);
+  if (!item || !scanAdjustMode) return;
+  const qty = Math.floor(Number($('#scanAdjustQty').value) || 0);
+  if (qty < 1) {
+    toast(t('scanQtyInvalid'), 'error');
+    return;
+  }
+  const delta = scanAdjustMode === 'add' ? qty : -qty;
+  adjustQuantity(item.id, delta, t('histViaScan'));
+  const fresh = items.find((it) => it.id === scannedItemId);
+  if (!fresh) return;
+  if (scanAdjustMode === 'add') {
+    toast(t('scanAddToast', { n: qty.toLocaleString(), name: fresh.name, total: (Number(fresh.quantity) || 0).toLocaleString() }));
+  } else {
+    toast(t('scanRemoveToast', { n: qty.toLocaleString(), name: fresh.name, total: (Number(fresh.quantity) || 0).toLocaleString() }));
+  }
+  closeScanAdjust();
+  renderScanQty(fresh);
+}
+
+function lookupManualCode() {
+  const code = $('#scanCodeInput').value.trim();
+  if (!code) return;
+  handleScanCode(code);
+}
+
+function resumeScanning() {
+  closeScanAdjust();
+  $('#scanResult').hidden = true;
+  $('#scanAgainBtn').hidden = true;
+  scannedItemId = null;
+  lastScanned = '';
+  lastScannedAt = 0;
+  scanPaused = false;
+  setScanStatus(t('pointCamera'));
+  startScanLoop();
+}
+
+function closeScanner() {
+  scanPaused = true;
+  stopScanLoop();
+  if (scanStream) {
+    scanStream.getTracks().forEach((t) => t.stop());
+    scanStream = null;
+  }
+  $('#scanVideo').srcObject = null;
+  $('#scanBackdrop').hidden = true;
+  document.body.style.overflow = '';
+}
+
+/* ---------- Item code modal ---------- */
+
+function codeValue(item) {
+  return item.sku ? item.sku : item.id;
+}
+
+function openCodeModal(item) {
+  if (!item) return;
+  const value = codeValue(item);
+  const svg = renderQrSvg(value);
+  if (!svg) {
+    toast(t('codeTooLong'), 'error');
+    return;
+  }
+  $('#codeSvg').innerHTML = svg;
+  $('#codeName').textContent = item.name;
+  $('#codeSku').textContent = item.sku ? t('skuPrefix', { sku: item.sku }) : '';
+  $('#codeSub').textContent = t('codeSub', { loc: item.location || '', value });
+  $('#copySkuBtn').style.display = item.sku ? '' : 'none';
+  $('#codeBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeCodeModal() {
+  $('#codeBackdrop').hidden = true;
+  document.body.style.overflow = '';
+}
+
+function copyText(text) {
+  const done = () => toast(t('skuCopied'));
+  const legacy = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      done();
+    } catch {
+      toast(t('copyFailed'), 'error');
+    }
+    ta.remove();
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, legacy);
+  } else {
+    legacy();
+  }
+}
+
+function printLabel(item) {
+  const html = labelHtml(item);
+  if (!html) return;
+  $('#printArea').innerHTML = html;
+  window.print();
+}
+
+/* ---------- Seed data ---------- */
+
+function seedSampleData() {
+  if (items.length > 0 && !window.confirm(t('replaceSample'))) return;
+  selectedIds.clear();
+  items = SAMPLE_ITEMS.map((it) => ({ ...it, updatedAt: new Date().toISOString() }));
+  saveItems();
+  render();
+  recordHistory({ type: 'import', detail: t('loadedSampleHistory', { n: items.length }) });
+  toast(t('sampleLoaded'));
+}
+
+/* ---------- Events ---------- */
+
+function bindEvents() {
+  $('#search').addEventListener('input', (e) => {
+    state.search = e.target.value;
+    render();
+  });
+
+  $('#categoryFilter').addEventListener('change', (e) => {
+    state.category = e.target.value;
+    render();
+  });
+
+  $('#categoryChips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    state.category = chip.dataset.cat;
+    $('#categoryFilter').value = state.category;
+    render();
+  });
+
+  $('#lowStockOnly').addEventListener('change', (e) => {
+    state.lowStockOnly = e.target.checked;
+    render();
+  });
+
+  document.querySelectorAll('th.sortable').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      if (state.sortKey === key) {
+        state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        state.sortKey = key;
+        state.sortDir = 'asc';
+      }
+      render();
+    });
+  });
+
+  $('#addBtn').addEventListener('click', () => openModal(null));
+  $('#emptyAddBtn').addEventListener('click', () => openModal(null));
+  $('#emptySeedBtn').addEventListener('click', seedSampleData);
+  $('#modalClose').addEventListener('click', closeModal);
+  $('#cancelBtn').addEventListener('click', closeModal);
+  $('#modalBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#modalBackdrop')) closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!$('#modalBackdrop').hidden) closeModal();
+    else if (!$('#scanBackdrop').hidden) closeScanner();
+    else if (!$('#sellBackdrop').hidden) closeSellModal();
+    else if (!$('#sellersBackdrop').hidden) closeSellers();
+    else if (!$('#reorderBackdrop').hidden) closeReorder();
+    else if (!$('#restockBackdrop').hidden) closeRestockModal();
+    else if (!$('#settingsBackdrop').hidden) closeSettings();
+    else if (!$('#codeBackdrop').hidden) closeCodeModal();
+    else if (!$('#historyBackdrop').hidden) closeHistory();
+    else if (!$('#bulkBackdrop').hidden) closeBulkEdit();
+  });
+
+  $('#itemForm').addEventListener('submit', handleSubmit);
+
+  $('#fUnitPrice').addEventListener('input', updateMarginHint);
+  $('#fCost').addEventListener('input', updateMarginHint);
+  $('#fInvoice').addEventListener('input', convertInvoiceInput);
+
+  $('#itemsBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const { action, id } = btn.dataset;
+    if (action === 'inc') adjustQuantity(id, 1);
+    else if (action === 'dec') adjustQuantity(id, -1);
+    else if (action === 'sell') openSellModal(items.find((it) => it.id === id));
+    else if (action === 'add-to-cart') cartAddItem(id);
+    else if (action === 'code') openCodeModal(items.find((it) => it.id === id));
+    else if (action === 'edit') openModal(items.find((it) => it.id === id));
+    else if (action === 'delete') deleteItem(id);
+  });
+
+  $('#itemsBody').addEventListener('change', (e) => {
+    const cb = e.target.closest('.row-select');
+    if (!cb) return;
+    toggleSelect(cb.dataset.id);
+  });
+
+  $('#selectAll').addEventListener('change', (e) => {
+    const visible = getFiltered().map((it) => it.id);
+    if (e.target.checked) visible.forEach((id) => selectedIds.add(id));
+    else visible.forEach((id) => selectedIds.delete(id));
+    render();
+  });
+
+  $('#printLabelsBtn').addEventListener('click', batchPrintLabels);
+  $('#countSheetBtn').addEventListener('click', printCountSheet);
+  $('#clearSelBtn').addEventListener('click', clearSelection);
+  $('#bulkEditBtn').addEventListener('click', openBulkEdit);
+  $('#bulkClose').addEventListener('click', closeBulkEdit);
+  $('#bulkCancel').addEventListener('click', closeBulkEdit);
+  $('#bulkBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#bulkBackdrop')) closeBulkEdit();
+  });
+  $('#bulkStockMode').addEventListener('change', updateBulkUi);
+  $('#bulkPriceMode').addEventListener('change', updateBulkUi);
+  $('#bulkApply').addEventListener('click', applyBulkEdit);
+
+  $('#codeClose').addEventListener('click', closeCodeModal);
+  $('#codeBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#codeBackdrop')) closeCodeModal();
+  });
+  $('#copySkuBtn').addEventListener('click', () => {
+    const name = $('#codeName').textContent;
+    const item = items.find((it) => it.name === name);
+    if (item && item.sku) copyText(item.sku);
+  });
+  $('#printLabelBtn').addEventListener('click', () => {
+    const name = $('#codeName').textContent;
+    const item = items.find((it) => it.name === name);
+    if (item) printLabel(item);
+  });
+
+  $('#scanBtn').addEventListener('click', openScanner);
+  $('#scanClose').addEventListener('click', closeScanner);
+  $('#scanBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#scanBackdrop')) closeScanner();
+  });
+  $('#scanAgainBtn').addEventListener('click', resumeScanning);
+  $('#scanSellBtn').addEventListener('click', () => {
+    const item = items.find((it) => it.id === scannedItemId);
+    closeScanner();
+    if (item) openSellModal(item);
+  });
+  $('#scanOpenBtn').addEventListener('click', () => {
+    const item = items.find((it) => it.id === scannedItemId);
+    closeScanner();
+    if (item) openModal(item);
+  });
+  $('#scanIncBtn').addEventListener('click', () => {
+    const item = items.find((it) => it.id === scannedItemId);
+    if (!item) return;
+    adjustQuantity(item.id, 1);
+    renderScanQty(items.find((it) => it.id === scannedItemId));
+  });
+  $('#scanDecBtn').addEventListener('click', () => {
+    const item = items.find((it) => it.id === scannedItemId);
+    if (!item) return;
+    adjustQuantity(item.id, -1);
+    renderScanQty(items.find((it) => it.id === scannedItemId));
+  });
+  $('#scanCodeInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      lookupManualCode();
+    }
+  });
+  $('#scanLookupBtn').addEventListener('click', lookupManualCode);
+  $('#scanAddBtn').addEventListener('click', () => openScanAdjust('add'));
+  $('#scanRemoveBtn').addEventListener('click', () => openScanAdjust('remove'));
+  $('#scanAdjDecBtn').addEventListener('click', () => {
+    const q = $('#scanAdjustQty');
+    q.value = Math.max(1, (Number(q.value) || 1) - 1);
+    updateScanAdjustPreview();
+  });
+  $('#scanAdjIncBtn').addEventListener('click', () => {
+    const q = $('#scanAdjustQty');
+    q.value = (Number(q.value) || 0) + 1;
+    updateScanAdjustPreview();
+  });
+  $('#scanAdjustQty').addEventListener('input', updateScanAdjustPreview);
+  $('#scanAdjustPanel').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    const q = $('#scanAdjustQty');
+    q.value = Number(chip.dataset.chip) || 5;
+    updateScanAdjustPreview();
+    q.focus();
+    q.select();
+  });
+  $('#scanAdjustCancel').addEventListener('click', closeScanAdjust);
+  $('#scanAdjustConfirm').addEventListener('click', confirmScanAdjust);
+
+  $('#sellClose').addEventListener('click', closeSellModal);
+  $('#sellCancel').addEventListener('click', closeSellModal);
+  $('#sellConfirm').addEventListener('click', confirmSale);
+  $('#sellQty').addEventListener('input', updateSellTotal);
+  $('#sellQty').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmSale();
+    }
+  });
+  $('#sellBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#sellBackdrop')) closeSellModal();
+  });
+
+  $('#reorderBtn').addEventListener('click', openReorder);
+  $('#reorderClose').addEventListener('click', closeReorder);
+  $('#reorderBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#reorderBackdrop')) closeReorder();
+  });
+  $('#reorderCover').addEventListener('change', (e) => {
+    reorderCoverDays = Number(e.target.value) || 30;
+    saveReorderCoverDays();
+    renderReorder();
+    updateReorderControls();
+  });
+  $('#reorderList').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-restock]');
+    if (!btn) return;
+    openRestockModal(items.find((it) => it.id === btn.dataset.restock));
+  });
+  $('#reorderAllBtn').addEventListener('click', restockAll);
+
+  $('#restockClose').addEventListener('click', closeRestockModal);
+  $('#restockCancel').addEventListener('click', closeRestockModal);
+  $('#restockBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#restockBackdrop')) closeRestockModal();
+  });
+  $('#restockConfirm').addEventListener('click', confirmRestock);
+  $('#restockQty').addEventListener('input', updateRestockAfter);
+  $('#restockQty').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmRestock();
+    }
+  });
+
+  // Cart (POS)
+  $('#cartBtn').addEventListener('click', openCart);
+  $('#cartClose').addEventListener('click', closeCart);
+  $('#cartBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#cartBackdrop')) closeCart();
+  });
+  $('#cartClearBtn').addEventListener('click', () => {
+    if (cart.length > 0 && window.confirm(t('cartClearConfirm'))) {
+      cart = [];
+      renderCart();
+    }
+  });
+  $('#cartCheckoutBtn').addEventListener('click', checkoutCart);
+  $('#cartList').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const itemId = btn.dataset.itemId;
+    if (action === 'cart-inc') cartUpdateQty(itemId, (cart.find((c) => c.itemId === itemId) || {}).qty + 1);
+    else if (action === 'cart-dec') cartUpdateQty(itemId, (cart.find((c) => c.itemId === itemId) || {}).qty - 1);
+    else if (action === 'cart-remove') cartRemoveItem(itemId);
+  });
+  $('#sellersBtn').addEventListener('click', openSellers);
+  $('#sellersClose').addEventListener('click', closeSellers);
+  $('#sellersBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#sellersBackdrop')) closeSellers();
+  });
+  $('#sellersPeriod').addEventListener('change', (e) => {
+    sellersPeriod = e.target.value;
+    renderSellers();
+    if (sellersTab === 'items') drawTrendChart(sellersPeriod);
+  });
+  document.addEventListener('click', (e) => {
+    const tab = e.target.closest('.sellers-tab');
+    if (tab) {
+      sellersTab = tab.dataset.tab;
+      renderSellers();
+      if (sellersTab === 'items') drawTrendChart(sellersPeriod);
+      return;
+    }
+    // Expand/collapse category rows (click anywhere on the row)
+    const catRow = e.target.closest('.category-row');
+    if (catRow && sellersTab === 'categories' && !e.target.closest('.cat-change')) {
+      const cat = catRow.dataset.cat;
+      if (expandedCategories.has(cat)) expandedCategories.delete(cat);
+      else expandedCategories.add(cat);
+      renderCategorySellers();
+      return;
+    }
+  });
+  $('#sellersExportCsv').addEventListener('click', exportSellers);
+  $('#sellersExportPng').addEventListener('click', () => exportSellersImage('png'));
+  $('#sellersExportJpeg').addEventListener('click', () => exportSellersImage('jpeg'));
+  $('#sellersExportPdf').addEventListener('click', exportSellersPdf);
+  window.addEventListener('resize', () => {
+    if (!$('#sellersBackdrop').hidden && sellersTab === 'items') drawTrendChart(sellersPeriod);
+  });
+  $('#stats').addEventListener('click', (e) => {
+    const card = e.target.closest('.stat-card.clickable');
+    if (!card) return;
+    if (card.dataset.target === 'reorder') openReorder();
+    else openSellers();
+  });
+
+  $('#historyBtn').addEventListener('click', openHistory);
+  $('#historyClose').addEventListener('click', closeHistory);
+  $('#historyBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#historyBackdrop')) closeHistory();
+  });
+  $('#historyTypeFilter').addEventListener('change', (e) => {
+    state.historyType = e.target.value;
+    renderHistory();
+  });
+  $('#historySearch').addEventListener('input', (e) => {
+    state.historySearch = e.target.value;
+    renderHistory();
+  });
+  $('#clearHistoryBtn').addEventListener('click', () => {
+    if (!history.length) return;
+    if (!window.confirm(t('clearHistoryConfirm'))) return;
+    const histSnapshot = [...history];
+    history = [];
+    saveHistory();
+    renderHistory();
+    toastWithUndo(t('histCleared'), 'success', {
+      type: 'clearHistory',
+      label: t('undoClearHistory'),
+      inverse: () => {
+        history = histSnapshot;
+        saveHistory();
+        renderHistory();
+      },
+    });
+  });
+
+  $('#themeBtn').addEventListener('click', toggleTheme);
+
+  $('#settingsBtn').addEventListener('click', openSettings);
+  $('#settingsClose').addEventListener('click', closeSettings);
+  $('#settingsDone').addEventListener('click', closeSettings);
+  $('#settingsBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#settingsBackdrop')) closeSettings();
+  });
+  $('#settingsLang').addEventListener('change', (e) => changeSettings({ lang: e.target.value }));
+  $('#settingsCurrency').addEventListener('change', (e) => changeSettings({ currency: e.target.value }));
+  $('#categoryAddBtn').addEventListener('click', addCategory);
+  $('#categoryNewName').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addCategory();
+    }
+  });
+  $('#settingsCategoryList').addEventListener('click', (e) => {
+    const save = e.target.closest('#categoryEditSave');
+    const cancel = e.target.closest('#categoryEditCancel');
+    const act = e.target.closest('[data-act]');
+    if (save) {
+      renameCategory(editingCategory, $('#categoryEditInput').value);
+    } else if (cancel) {
+      editingCategory = null;
+      renderCategoryManager();
+    } else if (act) {
+      const cat = act.dataset.cat;
+      if (act.dataset.act === 'edit') {
+        editingCategory = cat;
+        renderCategoryManager();
+        const inp = $('#categoryEditInput');
+        if (inp) {
+          inp.focus();
+          inp.select();
+        }
+      } else if (act.dataset.act === 'delete') {
+        deleteCategory(cat);
+      }
+    }
+  });
+  $('#settingsCategoryList').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.id === 'categoryEditInput') {
+      e.preventDefault();
+      renameCategory(editingCategory, e.target.value);
+    }
+  });
+  $('#settingsRate').addEventListener('change', (e) => {
+    const r = Number(e.target.value);
+    changeSettings({ rate: r > 0 ? r : DEFAULT_RATE });
+  });
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSystemChange = (e) => {
+      let stored = null;
+      try { stored = localStorage.getItem(THEME_KEY); } catch (err) { /* ignore */ }
+      if (!stored) applyTheme(e.matches ? 'dark' : 'light');
+    };
+    if (mq.addEventListener) mq.addEventListener('change', onSystemChange);
+    else if (mq.addListener) mq.addListener(onSystemChange);
+  }
+
+  $('#exportBtn').addEventListener('click', exportCsv);
+
+  $('#importFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) handleImport(file);
+    e.target.value = '';
+  });
+}
+
+/* ---------- PWA: installable + offline ---------- */
+
+let deferredPrompt = null;
+const installBtn = document.getElementById('installBtn');
+if (installBtn) {
+  const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+
+  if (isStandalone) {
+    installBtn.hidden = true; // already running as an installed app
+  } else if (isIOS && !navigator.standalone) {
+    // iOS Safari has no install prompt API — show the button as a hint instead.
+    installBtn.hidden = false;
+    installBtn.addEventListener('click', () => toast(t('installHint')));
+  } else {
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      installBtn.hidden = false;
+    });
+    installBtn.addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      installBtn.hidden = true;
+    });
+  }
+
+  window.addEventListener('appinstalled', () => {
+    installBtn.hidden = true;
+    deferredPrompt = null;
+  });
+}
+
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('Service worker registration failed:', err));
+  });
+}
+
+/* ---------- Init ---------- */
+
+document.addEventListener('DOMContentLoaded', () => {
+  bindEvents();
+  applyUi(); // language, currency, theme sync, and first render
+});
