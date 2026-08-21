@@ -5,14 +5,12 @@
    reach the user) with the cached copy as the offline fallback; other same-origin
    GET assets are cache-first with network backfill. */
 
-const CACHE = 'stockroom-v3';
+const CACHE = 'stockroom-v4';
 
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './app.js',
-  './styles.css',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/maskable-192.png',
