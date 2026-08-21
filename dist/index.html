@@ -1424,9 +1424,7 @@ function fmtCurrency(n) {
   try {
     return value.toLocaleString(uiLocale(), { style: 'currency', currency: settings.currency });
   } catch (e) {
-    return (settings.currency === 'PHP' ? '₱' : '
-</body>
-</html>) + value.toFixed(2);
+    return (settings.currency === 'PHP' ? '₱' : '$') + value.toFixed(2);
   }
 }
 
@@ -2251,13 +2249,9 @@ function currencySymbol(cur) {
       currencyDisplay: 'narrowSymbol',
     }).formatToParts(0);
     const sym = parts.find((p) => p.type === 'currency');
-    return sym ? sym.value : (c === 'PHP' ? '₱' : '
-</body>
-</html>);
+    return sym ? sym.value : (c === 'PHP' ? '₱' : '$');
   } catch (e) {
-    return c === 'PHP' ? '₱' : '
-</body>
-</html>;
+    return c === 'PHP' ? '₱' : '$';
   }
 }
 
