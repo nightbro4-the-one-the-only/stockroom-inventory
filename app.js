@@ -270,6 +270,8 @@ const I18N = {
     undoClearHistory: 'clear history',
     cartAddBtn: 'Add to cart',
     cartAddBtnTitle: 'Add to cart',
+    updateAvailable: 'A new version is available.',
+    updateReload: 'Reload',
     itemGone: 'This item no longer exists.',
     enterQtySell: 'Enter a quantity to sell.',
     inStockEach: '{n} in stock · {price} each',
@@ -643,6 +645,8 @@ const I18N = {
     undoClearHistory: 'i-clear ang kasaysayan',
     cartAddBtn: 'Idagdag sa cart',
     cartAddBtnTitle: 'Idagdag sa cart',
+    updateAvailable: 'May bagong bersyon na.',
+    updateReload: 'I-reload',
     itemGone: 'Wala na ang item na ito.',
     enterQtySell: 'Maglagay ng dami na ibebenta.',
     inStockEach: '{n} sa stock · {price} bawat isa',
@@ -4955,9 +4959,53 @@ if (installBtn) {
 }
 
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+  let newWorker = null;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('Service worker registration failed:', err));
+    navigator.serviceWorker.register('./sw.js').then((reg) => {
+      // Check for updates every 60 seconds
+      setInterval(() => reg.update(), 60000);
+      reg.addEventListener('updatefound', () => {
+        newWorker = reg.installing;
+        if (newWorker) {
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              showUpdateBanner();
+            }
+          });
+        }
+      });
+    }).catch((err) => console.warn('Service worker registration failed:', err));
+
+    // Listen for SW update notifications
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'SW_UPDATED') {
+        // A new SW activated in another tab — reload to pick it up
+        window.location.reload();
+      }
+    });
   });
+}
+
+function showUpdateBanner() {
+  const existing = document.getElementById('updateBanner');
+  if (existing) return;
+  const banner = document.createElement('div');
+  banner.id = 'updateBanner';
+  banner.className = 'update-banner';
+  banner.innerHTML = '<span class="update-banner-msg">' + escapeHtml(t('updateAvailable')) + '</span>';
+  const btn = document.createElement('button');
+  btn.className = 'update-banner-btn';
+  btn.textContent = t('updateReload');
+  btn.addEventListener('click', () => {
+    if (navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'SKIP_WAITING' });
+    }
+    window.location.reload();
+  });
+  banner.appendChild(btn);
+  document.body.appendChild(banner);
+  // Auto-dismiss after 30s
+  setTimeout(() => { if (banner.parentNode) banner.remove(); }, 30000);
 }
 
 /* ---------- Init ---------- */
