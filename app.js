@@ -435,6 +435,7 @@ const I18N = {
     rateHint: 'Used to convert supplier invoices between USD and PHP.',
     doneBtn: 'Done',
     settingsSaved: 'Settings saved.',
+    currencyConverted: 'Converted all prices from {from} to {to} ({sym}).',
     categoriesSection: 'Categories',
     categoriesHint: 'Manage the categories used to organize your items.',
     categoryAddPlaceholder: 'New category name',
@@ -810,6 +811,7 @@ const I18N = {
     rateHint: 'Ginagamit ito para i-convert ang mga invoice ng supplier sa pagitan ng USD at PHP.',
     doneBtn: 'Tapos',
     settingsSaved: 'Na-save ang mga setting.',
+    currencyConverted: 'Na-convert ang lahat ng presyo mula {from} patungong {to} ({sym}).',
     categoriesSection: 'Mga Kategorya',
     categoriesHint: 'Pamahalaan ang mga kategoryang ginagamit sa pag-oorganisa ng mga item.',
     categoryAddPlaceholder: 'Pangalan ng bagong kategorya',
@@ -937,10 +939,36 @@ function closeSettings() {
 }
 
 function changeSettings(next) {
+  const prevCurrency = settings.currency;
+  const newCurrency = next.currency || prevCurrency;
+  const prevRate = Number(settings.rate) || DEFAULT_RATE;
+  const newRate = Number(next.rate) || prevRate;
+
+  // If currency actually changed, convert all stored prices
+  if (newCurrency !== prevCurrency) {
+    const toNew = newCurrency === 'PHP' ? prevRate : 1 / prevRate;
+    const round2 = (v) => Math.round(v * 100) / 100;
+    items.forEach((it) => {
+      if (it.unitPrice) it.unitPrice = round2(it.unitPrice * toNew);
+      if (it.costPrice) it.costPrice = round2(it.costPrice * toNew);
+    });
+    sales.forEach((s) => {
+      if (s.unitPrice) s.unitPrice = round2(s.unitPrice * toNew);
+      if (s.revenue) s.revenue = round2(s.revenue * toNew);
+    });
+    saveItems();
+    saveSales();
+  }
+
   settings = { ...settings, ...next };
   saveSettings();
   applyUi();
-  toast(t('settingsSaved'));
+  if (newCurrency !== prevCurrency) {
+    const sym = currencySymbol();
+    toast(t('currencyConverted', { from: prevCurrency, to: newCurrency, sym }));
+  } else {
+    toast(t('settingsSaved'));
+  }
 }
 
 /* ---------- Theme ---------- */
